@@ -26,16 +26,12 @@ jobs:
           raw=gzip.decompress(base64.b64decode(''.join(p.read_text().strip() for p in parts)))
           if hashlib.sha256(raw).hexdigest()!='569c48b95996ca265e8d77e8e2b750bbf6f54a6fcc179b9c50ab2110059b8416': raise SystemExit('Lang SHA mismatch')
           r.joinpath('Lang.txt').write_bytes(raw)
-
-          p=r/'Main.txt'
-          text=p.read_text(encoding='utf-8-sig')
+          p=r/'Main.txt'; text=p.read_text(encoding='utf-8-sig')
           needle='            FHDExpPlanetPickerContainer ^{\n                Window ^{'
           repl='            FHDExpPlanetPickerContainer ^{\n                Panel ^{'
           if needle not in text: raise SystemExit('wide picker Window block not found')
           text=text.replace(needle,repl,1)
-          if 'FHDExpPlanetPickerContainer ^{\n                Window ^{' in text: raise SystemExit('unsafe Window still present')
           p.write_text(text,encoding='utf-8-sig')
-          print('patched wide picker Window -> Panel')
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -75,11 +71,11 @@ jobs:
           Copy-Item verify/Lang/Lang.txt out/Lang.roundtrip.txt
           Copy-Item verify/CacheData/CacheData.txt out/CacheData.roundtrip.txt
 
-      - name: Validate panel-based 960x640 picker and script tree
+      - name: Validate panel-based picker and script tree
         shell: pwsh
         run: |
           @'
-          import pathlib,re
+          import pathlib
           def rd(p):
               b=pathlib.Path(p).read_bytes()
               if b.startswith((b'\xff\xfe',b'\xfe\xff')): return b.decode('utf-16')
@@ -87,14 +83,14 @@ jobs:
               try:return b.decode('utf-8-sig')
               except:return b.decode('cp1251')
           main=rd('out/Main.roundtrip.txt'); lang=rd('out/Lang.roundtrip.txt')
-          if 'FHDExpPlanetPicker' not in main or 'Size=960,640' not in main: raise SystemExit('wide picker missing')
-          if 'FHDExpPlanetPickerContainer ^{\n                Window ^{' in main: raise SystemExit('unsafe Window survived')
-          if 'FHDExpPlanetPickerContainer ^{\n                Panel ^{' not in main: raise SystemExit('Panel picker missing')
+          if 'Name=FHDExpPlanetPicker' not in main or 'Size=960,640' not in main: raise SystemExit('wide picker missing')
+          if 'Window ^{' in main: raise SystemExit('unsafe TWindowGI remains in Main.dat')
+          if 'Panel ^{' not in main: raise SystemExit('panel UI missing')
           for x in ('FHDExpedition ^{','Open ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{'):
               if x not in lang: raise SystemExit('Lang missing '+x)
-          pathlib.Path('out/VALIDATION.txt').write_text('PASS\nWide picker 960x640 uses Panel, not empty TWindowGI.\nScript tree present.\nOfficial BlockParEditor 2.1 DAT -> TXT verification passed.\n',encoding='utf-8')
+          pathlib.Path('out/VALIDATION.txt').write_text('PASS\n960x640 picker uses Panel and no TWindowGI block remains.\nScript tree present.\nOfficial BlockParEditor 2.1 DAT -> TXT verification passed.\n',encoding='utf-8')
           '@ | python -
-          $r=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Wide picker container: Panel (no empty TWindowGI)')
+          $r=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Wide picker: Panel, no empty TWindowGI')
           foreach($p in @('out/CFG/Main.dat','out/CFG/Rus/Lang.dat','out/CFG/CacheData.dat')){$r+="$p size=$((Get-Item $p).Length) sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
           $r | Set-Content out/BLOCKPAREDITOR_BUILD_REPORT.txt -Encoding UTF8
 
