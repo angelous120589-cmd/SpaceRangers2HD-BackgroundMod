@@ -113,12 +113,18 @@ jobs:
 
           def read_text(path):
               raw = pathlib.Path(path).read_bytes()
-              for enc in ('utf-8-sig', 'cp1251', 'utf-16'):
+              if raw.startswith((b'\xff\xfe', b'\xfe\xff')):
+                  return raw.decode('utf-16')
+              try:
+                  return raw.decode('utf-8-sig')
+              except UnicodeDecodeError:
+                  pass
+              if b'\x00' in raw[:128]:
                   try:
-                      return raw.decode(enc)
+                      return raw.decode('utf-16-le')
                   except UnicodeDecodeError:
                       pass
-              raise SystemExit(f'Cannot decode {path}')
+              return raw.decode('cp1251')
 
           def parse(path):
               root = {'name':'', 'op':'', 'entries':[]}
