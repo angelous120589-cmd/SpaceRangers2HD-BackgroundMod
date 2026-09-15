@@ -1,9 +1,7 @@
-BlockParEditor 2.1 official build
+Official BlockParEditor 2.1
 Main.dat / Lang.dat: Main, Lang - HD
 CacheData.dat: CacheData - HD
-DAT -> TXT reverse conversion: OK
-Critical Lang blocks: Open, PickPlanetRow, ShowPlanetPage, ContinueNewExpedition, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT
-Main wide picker markers and CacheData mapping = PRESENT
-_ci/fhd_expedition/out/CFG/Main.dat | size=1946 | sha256=61d7d2d93fec26b8ab5a75e37ce0c2c204f9fd2f8a362adcefb5ab31bad46293
-_ci/fhd_expedition/out/CFG/Rus/Lang.dat | size=3394 | sha256=8fff9e062a1c42383c679b8e6368095d832458bfc0b2586ea7b2044ecdccf34a
-_ci/fhd_expedition/out/CFG/CacheData.dat | size=108 | sha256=87d6bc94d763f49dd08172ed4a5a8482a1faf022fc6865f62018508a101a4c0e
+DAT -> TXT reverse conversion completed
+_ci/fhd_expedition/out/CFG/Main.dat | size=1946 | sha256=3e6478a1994db950eb563d8b5deb1bec8602a1fef65abd90c885949ea8f29c29
+_ci/fhd_expedition/out/CFG/Rus/Lang.dat | size=3403 | sha256=d72a6e42f0ee54a46dbb6c4048f42b37580540be659490c60656be110268092c
+_ci/fhd_expedition/out/CFG/CacheData.dat | size=108 | sha256=3ec8be3c8ed685e0e176a69e85a5da0f30907010765bc51a9d2002e3d3ecd5aa
