@@ -1,0 +1,64 @@
+name: Reverse stable FHD Expedition Lang
+
+on:
+  push:
+    branches: [fhd-expedition-wide-build]
+    paths:
+      - '_ci/fhd_expedition/stable_lang.part00'
+      - '.github/workflows/fhd-expedition-reverse-stable.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reverse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fhd-expedition-wide-build
+
+      - name: Download official BlockParEditor 2.1
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip' -OutFile 'BlockParEditor_2.1.zip'
+          $hash=(Get-FileHash 'BlockParEditor_2.1.zip' -Algorithm SHA256).Hash.ToLower()
+          if($hash -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){ throw "BPE zip hash mismatch: $hash" }
+          Expand-Archive 'BlockParEditor_2.1.zip' 'BlockParEditor' -Force
+          $exe=Get-ChildItem 'BlockParEditor' -Filter 'BlockParEditor.exe' -Recurse | Select-Object -First 1
+          if(-not $exe){ throw 'BlockParEditor.exe not found' }
+          Set-Content 'bpe_path.txt' $exe.FullName
+
+      - name: Reverse stable v0.2.5 Lang.dat
+        shell: pwsh
+        run: |
+          @'
+          import base64,hashlib,pathlib
+          root=pathlib.Path('_ci/fhd_expedition')
+          b64=root.joinpath('stable_lang.part00').read_text(encoding='utf-8').strip()
+          raw=base64.b64decode(b64)
+          h=hashlib.sha256(raw).hexdigest()
+          if h!='02e4b7a300a4c0de475c5afd64adfe969fa038125b645073ab8f54b97786652a':
+              raise SystemExit('stable Lang.dat hash mismatch: '+h)
+          p=root/'stable_v025'
+          p.mkdir(exist_ok=True)
+          p.joinpath('Lang.dat').write_bytes(raw)
+          print('stable Lang.dat bytes',len(raw))
+          '@ | python -
+          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/stable_v025/Lang.dat').Path
+          Start-Sleep -Milliseconds 500
+          if(-not (Test-Path '_ci/fhd_expedition/stable_v025/Lang.txt')){ throw 'reverse Lang.txt not produced' }
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/stable_v025' | Out-Null
+          Copy-Item '_ci/fhd_expedition/stable_v025/Lang.txt' '_ci/fhd_expedition/out/stable_v025/Lang.txt' -Force
+
+      - name: Commit reverse source
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f _ci/fhd_expedition/out/stable_v025/Lang.txt
+          if(git diff --cached --quiet){ exit 0 }
+          git commit -m 'Reverse stable v0.2.5 Lang.dat with BlockParEditor [skip ci]'
+          git push origin HEAD:fhd-expedition-wide-build
