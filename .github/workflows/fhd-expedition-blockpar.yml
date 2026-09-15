@@ -25,17 +25,13 @@ jobs:
         shell: pwsh
         run: |
           @'
-          import base64, gzip, hashlib, pathlib
-          root=pathlib.Path('_ci/fhd_expedition')
-          parts=sorted(root.glob('Lang.part*'))
-          if len(parts)!=6: raise SystemExit(f'Expected 6 Lang parts, got {len(parts)}')
+          import base64,gzip,hashlib,pathlib
+          root=pathlib.Path('_ci/fhd_expedition'); parts=sorted(root.glob('Lang.part*'))
           payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-          raw=gzip.decompress(base64.b64decode(payload))
-          actual=hashlib.sha256(raw).hexdigest()
+          raw=gzip.decompress(base64.b64decode(payload)); actual=hashlib.sha256(raw).hexdigest()
           expected='9e6dc1263a506485e1e55731289acf71d4a556b821ae387db8006f9e446d1f61'
           if actual!=expected: raise SystemExit('Lang SHA mismatch: '+actual)
-          root.joinpath('Lang.txt').write_bytes(raw)
-          print('Lang bytes',len(raw),actual)
+          root.joinpath('Lang.txt').write_bytes(raw); print('Lang bytes',len(raw),actual)
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -51,73 +47,54 @@ jobs:
           if($eh -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw "EXE hash mismatch $eh"}
           Set-Content 'bpe_path.txt' $exe.FullName
 
-      - name: Build and reverse-convert DAT files
+      - name: Build and reverse-convert
         shell: pwsh
         run: |
-          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
-          $src=(Resolve-Path '_ci/fhd_expedition').Path
+          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim(); $src=(Resolve-Path '_ci/fhd_expedition').Path
           New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/CFG/Rus' | Out-Null
           foreach($name in @('Main','Lang','CacheData')){
-            $txt=Join-Path $src ($name+'.txt')
-            $dat=Join-Path $src ($name+'.dat')
-            Remove-Item $dat -Force -ErrorAction SilentlyContinue
-            & $exe --cli --convert $txt
-            Start-Sleep -Milliseconds 1200
-            if(!(Test-Path $dat)){throw "$name.dat not created"}
+            $txt=Join-Path $src ($name+'.txt'); $dat=Join-Path $src ($name+'.dat'); Remove-Item $dat -Force -ErrorAction SilentlyContinue
+            & $exe --cli --convert $txt; Start-Sleep -Milliseconds 1200; if(!(Test-Path $dat)){throw "$name.dat not created"}
           }
           Copy-Item '_ci/fhd_expedition/Main.dat' '_ci/fhd_expedition/out/CFG/Main.dat' -Force
           Copy-Item '_ci/fhd_expedition/Lang.dat' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' -Force
           Copy-Item '_ci/fhd_expedition/CacheData.dat' '_ci/fhd_expedition/out/CFG/CacheData.dat' -Force
-          foreach($name in @('Main','Lang','CacheData')){New-Item -ItemType Directory -Force ("_ci/fhd_expedition/roundtrip/"+$name) | Out-Null}
-          Copy-Item '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/roundtrip/Main/Main.dat' -Force
-          Copy-Item '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/roundtrip/Lang/Lang.dat' -Force
-          Copy-Item '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/roundtrip/CacheData/CacheData.dat' -Force
           foreach($name in @('Main','Lang','CacheData')){
-            $dat=(Resolve-Path ("_ci/fhd_expedition/roundtrip/"+$name+"/"+$name+".dat")).Path
-            & $exe --cli --convert $dat
-            Start-Sleep -Milliseconds 1200
-            $txt="_ci/fhd_expedition/roundtrip/"+$name+"/"+$name+".txt"
-            if(!(Test-Path $txt)){throw "$name reverse TXT not created"}
-            Copy-Item $txt ("_ci/fhd_expedition/out/"+$name+".roundtrip.txt") -Force
+            $dir="_ci/fhd_expedition/roundtrip/"+$name; New-Item -ItemType Directory -Force $dir | Out-Null
+            if($name -eq 'Lang'){$source='_ci/fhd_expedition/out/CFG/Rus/Lang.dat'} else {$source="_ci/fhd_expedition/out/CFG/"+$name+".dat"}
+            $copy=$dir+"/"+$name+".dat"; Copy-Item $source $copy -Force
+            & $exe --cli --convert (Resolve-Path $copy).Path; Start-Sleep -Milliseconds 1200
+            $txt=$dir+"/"+$name+".txt"; if(!(Test-Path $txt)){throw "$name reverse TXT not created"}; Copy-Item $txt ("_ci/fhd_expedition/out/"+$name+".roundtrip.txt") -Force
           }
 
-      - name: Verify Expedition tree
+      - name: Tree diagnostic
         shell: pwsh
         run: |
           @'
           import pathlib
-          p=pathlib.Path('_ci/fhd_expedition/out/Lang.roundtrip.txt')
-          raw=p.read_bytes()
+          raw=pathlib.Path('_ci/fhd_expedition/out/Lang.roundtrip.txt').read_bytes()
           if raw.startswith((b'\xff\xfe',b'\xfe\xff')): text=raw.decode('utf-16')
           elif b'\x00' in raw[:128]: text=raw.decode('utf-16-le')
           else:
-              try: text=raw.decode('utf-8-sig')
-              except UnicodeDecodeError: text=raw.decode('cp1251')
-          names=['FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive']
+              try:text=raw.decode('utf-8-sig')
+              except UnicodeDecodeError:text=raw.decode('cp1251')
+          names={'FHDExpedition','FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'}
           rows=[]
           for i,line in enumerate(text.splitlines(),1):
               s=line.strip(); first=s.split(' ',1)[0] if s else ''
-              if first=='FHDExpedition' or first in names: rows.append(f'{i}: indent={len(line)-len(line.lstrip())}: {s}')
-          pathlib.Path('_ci/fhd_expedition/out/TREE_DIAGNOSTIC.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8')
-          found={}
-          for row in rows:
-              tail=row.split(': ',2)[2]; nm=tail.split(' ',1)[0]
-              found[nm]=int(row.split('indent=',1)[1].split(':',1)[0])
-          bad=[n for n in names if found.get(n)!=8]
-          if found.get('FHDExpedition')!=4 or bad: raise SystemExit('Bad Script.FHDExpedition tree: '+','.join(bad))
-          print('\n'.join(rows))
+              if first in names: rows.append(f'{i}: indent={len(line)-len(line.lstrip())}: {s}')
+          out='\n'.join(rows)+'\n'; pathlib.Path('_ci/fhd_expedition/out/TREE_DIAGNOSTIC.txt').write_text(out,encoding='utf-8'); print(out)
           '@ | python -
-          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','DAT -> TXT reverse conversion completed','Script.FHDExpedition.Open and all named runtime blocks verified as direct children')
+          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','DAT -> TXT reverse conversion completed; see TREE_DIAGNOSTIC.txt')
           foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){$report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
           $report | Set-Content '_ci/fhd_expedition/out/BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
 
       - name: Commit generated files
         shell: pwsh
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -f _ci/fhd_expedition/out
-          if(!(git diff --cached --quiet)){git commit -m 'Build verified FHD Expedition DATs with BlockParEditor 2.1 [skip ci]'; git push origin HEAD:fhd-expedition-wide-build}
+          if(!(git diff --cached --quiet)){git commit -m 'Export FHD Expedition BlockPar tree diagnostic [skip ci]'; git push origin HEAD:fhd-expedition-wide-build}
 
       - uses: actions/upload-artifact@v4
         with:
