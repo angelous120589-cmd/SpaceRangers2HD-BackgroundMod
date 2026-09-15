@@ -26,15 +26,14 @@ jobs:
         run: |
           @'
           import base64, gzip, hashlib, pathlib
-          root = pathlib.Path('_ci/fhd_expedition')
-          parts = sorted(root.glob('Lang.part*'))
-          payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-          raw = gzip.decompress(base64.b64decode(payload))
-          actual = hashlib.sha256(raw).hexdigest()
-          expected = 'dd8a3ed37f35a12ceb66ecf4ab8ab88003955024c80cd475526a2790408ab9d3'
-          if actual != expected: raise SystemExit('Lang SHA mismatch: '+actual)
+          root=pathlib.Path('_ci/fhd_expedition')
+          payload=''.join(p.read_text(encoding='utf-8').strip() for p in sorted(root.glob('Lang.part*')))
+          raw=gzip.decompress(base64.b64decode(payload))
+          actual=hashlib.sha256(raw).hexdigest()
+          expected='dd8a3ed37f35a12ceb66ecf4ab8ab88003955024c80cd475526a2790408ab9d3'
+          if actual!=expected: raise SystemExit('Lang SHA mismatch: '+actual)
           root.joinpath('Lang.txt').write_bytes(raw)
-          print('Lang bytes', len(raw), actual)
+          print('Lang bytes',len(raw),actual)
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -58,27 +57,27 @@ jobs:
           New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/CFG/Rus' | Out-Null
           foreach($name in @('Main','Lang','CacheData')){
             $txt=Join-Path $src ($name+'.txt')
-            Remove-Item (Join-Path $src ($name+'.dat')) -Force -ErrorAction SilentlyContinue
-            & $exe --cli --convert $txt
             $dat=Join-Path $src ($name+'.dat')
+            Remove-Item $dat -Force -ErrorAction SilentlyContinue
+            & $exe --cli --convert $txt
+            Start-Sleep -Milliseconds 1200
             if(!(Test-Path $dat)){throw "$name.dat not created"}
           }
           Copy-Item '_ci/fhd_expedition/Main.dat' '_ci/fhd_expedition/out/CFG/Main.dat' -Force
           Copy-Item '_ci/fhd_expedition/Lang.dat' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' -Force
           Copy-Item '_ci/fhd_expedition/CacheData.dat' '_ci/fhd_expedition/out/CFG/CacheData.dat' -Force
-
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/Main' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/Lang' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/CacheData' | Out-Null
+          foreach($name in @('Main','Lang','CacheData')){New-Item -ItemType Directory -Force ("_ci/fhd_expedition/roundtrip/"+$name) | Out-Null}
           Copy-Item '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/roundtrip/Main/Main.dat' -Force
           Copy-Item '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/roundtrip/Lang/Lang.dat' -Force
           Copy-Item '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/roundtrip/CacheData/CacheData.dat' -Force
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/Main/Main.dat').Path
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/Lang/Lang.dat').Path
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/CacheData/CacheData.dat').Path
-          Copy-Item '_ci/fhd_expedition/roundtrip/Main/Main.txt' '_ci/fhd_expedition/out/Main.roundtrip.txt' -Force
-          Copy-Item '_ci/fhd_expedition/roundtrip/Lang/Lang.txt' '_ci/fhd_expedition/out/Lang.roundtrip.txt' -Force
-          Copy-Item '_ci/fhd_expedition/roundtrip/CacheData/CacheData.txt' '_ci/fhd_expedition/out/CacheData.roundtrip.txt' -Force
+          foreach($name in @('Main','Lang','CacheData')){
+            $dat=(Resolve-Path ("_ci/fhd_expedition/roundtrip/"+$name+"/"+$name+".dat")).Path
+            & $exe --cli --convert $dat
+            Start-Sleep -Milliseconds 1200
+            $txt="_ci/fhd_expedition/roundtrip/"+$name+"/"+$name+".txt"
+            if(!(Test-Path $txt)){throw "$name reverse TXT not created"}
+            Copy-Item $txt ("_ci/fhd_expedition/out/"+$name+".roundtrip.txt") -Force
+          }
 
       - name: Diagnose Expedition tree
         shell: pwsh
@@ -91,22 +90,16 @@ jobs:
           elif b'\x00' in raw[:128]: text=raw.decode('utf-16-le')
           else:
               try: text=raw.decode('utf-8-sig')
-              except: text=raw.decode('cp1251')
+              except UnicodeDecodeError: text=raw.decode('cp1251')
           names={'FHDExpedition','FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'}
           rows=[]
           for i,line in enumerate(text.splitlines(),1):
-              s=line.strip()
-              first=s.split(' ',1)[0] if s else ''
-              if first in names:
-                  rows.append(f'{i}: indent={len(line)-len(line.lstrip())}: {s}')
+              s=line.strip(); first=s.split(' ',1)[0] if s else ''
+              if first in names: rows.append(f'{i}: indent={len(line)-len(line.lstrip())}: {s}')
           pathlib.Path('_ci/fhd_expedition/out/TREE_DIAGNOSTIC.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8')
           print('\n'.join(rows))
           '@ | python -
-          $report=@()
-          $report+='Official BlockParEditor 2.1'
-          $report+='Main.dat / Lang.dat: Main, Lang - HD'
-          $report+='CacheData.dat: CacheData - HD'
-          $report+='DAT -> TXT reverse conversion completed'
+          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','DAT -> TXT reverse conversion completed')
           foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){$report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
           $report | Set-Content '_ci/fhd_expedition/out/BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
 
