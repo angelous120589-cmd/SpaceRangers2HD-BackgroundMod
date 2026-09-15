@@ -33,15 +33,17 @@ jobs:
               raise SystemExit(f'Expected 6 Lang chunks, got {len(parts)}')
           payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
           raw = gzip.decompress(base64.b64decode(payload))
-          expected = '86b4b7c8add7b7cd28e8a9bde8ecfe9a1f087aa8c639fc794b3d29efed7ec564'
+          expected = 'dd8a3ed37f35a12ceb66ecf4ab8ab88003955024c80cd475526a2790408ab9d3'
           actual = hashlib.sha256(raw).hexdigest()
           if actual != expected:
               raise SystemExit(f'Lang source SHA mismatch: {actual}')
           root.joinpath('Lang.txt').write_bytes(raw)
           text = raw.decode('utf-8-sig')
-          for marker in ('FHDExpedition ^{','Open ~{','PickPlanetRow ~{','ShowPlanetPage ~{','FHDExpeditionProbe ^{','FHDExpeditionUI ^{','ShipInfo ^{'):
+          for marker in ('FHDExpedition ^{','Open ^{','PickPlanetRow ^{','ShowPlanetPage ^{','FHDExpeditionProbe ^{','FHDExpeditionUI ^{','ShipInfo ^{'):
               if marker not in text:
                   raise SystemExit(f'Missing required Lang source marker: {marker}')
+          if '~{' in text:
+              raise SystemExit('Merge-style ~{ block remains in Lang source; executable blocks must use ^{')
           print('Lang bytes:', len(raw), 'sha256:', actual)
           '@ | python -
 
@@ -100,7 +102,7 @@ jobs:
         shell: pwsh
         run: |
           @'
-          import pathlib, re
+          import pathlib
 
           def read_text(path):
               raw = pathlib.Path(path).read_bytes()
@@ -117,10 +119,10 @@ jobs:
           required = (
               'Script ^{',
               'FHDExpedition ^{',
-              'Open ~{',
-              'PickPlanetRow ~{',
-              'ShowPlanetPage ~{',
-              'ContinueNewExpedition ~{',
+              'Open ^{',
+              'PickPlanetRow ^{',
+              'ShowPlanetPage ^{',
+              'ContinueNewExpedition ^{',
               'ShipInfo ^{',
               'FHDExpeditionProbe ^{',
               'FHDExpeditionUI ^{',
@@ -128,6 +130,8 @@ jobs:
           missing = [m for m in required if m not in lang]
           if missing:
               raise SystemExit('Roundtrip Lang missing critical blocks: ' + ', '.join(missing))
+          if '~{' in lang:
+              raise SystemExit('Roundtrip Lang still contains merge-style ~{ blocks')
 
           main = read_text('_ci/fhd_expedition/verify/Main/Main.txt')
           for marker in ('Data ^{','FHD_Expedition=1,Script.FHD_Expedition','ML ^{','FHDExpPlanetPicker'):
@@ -146,6 +150,7 @@ jobs:
           $report += 'Main.dat / Lang.dat: Main, Lang - HD'
           $report += 'CacheData.dat: CacheData - HD'
           $report += 'DAT -> TXT reverse conversion: OK'
+          $report += 'Executable Lang blocks use normal ^{ BlockPar nodes; no ~{ merge nodes remain'
           $report += 'Critical Lang blocks: Open, PickPlanetRow, ShowPlanetPage, ContinueNewExpedition, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT'
           $report += 'Main wide picker markers and CacheData mapping = PRESENT'
           foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
