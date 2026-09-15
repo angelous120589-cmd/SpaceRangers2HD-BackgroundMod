@@ -4,7 +4,7 @@ on:
   push:
     branches: [fhd-expedition-wide-build]
     paths:
-      - '_ci/fhd_expedition/stable_lang.part00'
+      - '_ci/fhd_expedition/stable_lang.part*'
       - '.github/workflows/fhd-expedition-reverse-stable.yml'
   workflow_dispatch:
 
@@ -36,7 +36,10 @@ jobs:
           @'
           import base64,hashlib,pathlib
           root=pathlib.Path('_ci/fhd_expedition')
-          b64=root.joinpath('stable_lang.part00').read_text(encoding='utf-8').strip()
+          parts=sorted(root.glob('stable_lang.part*'))
+          if len(parts)!=5:
+              raise SystemExit(f'expected 5 stable Lang parts, got {len(parts)}')
+          b64=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
           raw=base64.b64decode(b64)
           h=hashlib.sha256(raw).hexdigest()
           if h!='02e4b7a300a4c0de475c5afd64adfe969fa038125b645073ab8f54b97786652a':
@@ -44,7 +47,7 @@ jobs:
           p=root/'stable_v025'
           p.mkdir(exist_ok=True)
           p.joinpath('Lang.dat').write_bytes(raw)
-          print('stable Lang.dat bytes',len(raw))
+          print('stable Lang.dat bytes',len(raw),'sha256',h)
           '@ | python -
           $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
           & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/stable_v025/Lang.dat').Path
