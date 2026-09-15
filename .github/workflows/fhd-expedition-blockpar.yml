@@ -55,20 +55,35 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Get-Content 'bpe_path.txt' -Raw).Trim()
+          $src = (Resolve-Path '_ci/fhd_expedition').Path
           New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/CFG/Rus' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify' | Out-Null
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/Main' | Out-Null
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/Lang' | Out-Null
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/CacheData' | Out-Null
 
-          & $exe --cli --convert '_ci/fhd_expedition/Main.txt' '_ci/fhd_expedition/out/CFG/Main.dat'
-          if (-not (Test-Path '_ci/fhd_expedition/out/CFG/Main.dat')) { throw 'Main.dat not created' }
-          & $exe --cli --convert '_ci/fhd_expedition/Lang.txt' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat'
-          if (-not (Test-Path '_ci/fhd_expedition/out/CFG/Rus/Lang.dat')) { throw 'Lang.dat not created' }
-          & $exe --cli --convert '_ci/fhd_expedition/CacheData.txt' '_ci/fhd_expedition/out/CFG/CacheData.dat'
-          if (-not (Test-Path '_ci/fhd_expedition/out/CFG/CacheData.dat')) { throw 'CacheData.dat not created' }
+          foreach ($name in @('Main','Lang','CacheData')) {
+            $txt = Join-Path $src ($name + '.txt')
+            Remove-Item (Join-Path $src ($name + '.dat')) -Force -ErrorAction SilentlyContinue
+            & $exe --cli --convert $txt
+            Start-Sleep -Milliseconds 500
+            $dat = Join-Path $src ($name + '.dat')
+            if (-not (Test-Path $dat)) { throw "$name.dat not created next to source" }
+          }
 
-          & $exe --cli --convert '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/verify/Main.roundtrip.txt'
-          & $exe --cli --convert '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/verify/Lang.roundtrip.txt'
-          & $exe --cli --convert '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/verify/CacheData.roundtrip.txt'
-          foreach ($p in @('_ci/fhd_expedition/verify/Main.roundtrip.txt','_ci/fhd_expedition/verify/Lang.roundtrip.txt','_ci/fhd_expedition/verify/CacheData.roundtrip.txt')) {
+          Copy-Item '_ci/fhd_expedition/Main.dat' '_ci/fhd_expedition/out/CFG/Main.dat' -Force
+          Copy-Item '_ci/fhd_expedition/Lang.dat' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' -Force
+          Copy-Item '_ci/fhd_expedition/CacheData.dat' '_ci/fhd_expedition/out/CFG/CacheData.dat' -Force
+
+          Copy-Item '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/verify/Main/Main.dat' -Force
+          Copy-Item '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/verify/Lang/Lang.dat' -Force
+          Copy-Item '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/verify/CacheData/CacheData.dat' -Force
+
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/Main/Main.dat').Path
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/Lang/Lang.dat').Path
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/CacheData/CacheData.dat').Path
+          Start-Sleep -Milliseconds 500
+
+          foreach ($p in @('_ci/fhd_expedition/verify/Main/Main.txt','_ci/fhd_expedition/verify/Lang/Lang.txt','_ci/fhd_expedition/verify/CacheData/CacheData.txt')) {
             if (-not (Test-Path $p)) { throw "Reverse conversion failed: $p" }
           }
 
