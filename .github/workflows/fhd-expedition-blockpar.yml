@@ -4,8 +4,8 @@ on:
   push:
     branches: [fhd-expedition-wide-build]
     paths:
-      - '_ci/fhd_expedition/Main.txt'
-      - '_ci/fhd_expedition/Lang.txt.gz.b64'
+      - '_ci/fhd_expedition/MainMerged.gz.b64'
+      - '_ci/fhd_expedition/LangRuntime.gz.b64'
       - '_ci/fhd_expedition/CacheData.txt'
       - '.github/workflows/fhd-expedition-blockpar.yml'
   workflow_dispatch:
@@ -21,76 +21,30 @@ jobs:
         with:
           ref: fhd-expedition-wide-build
 
-      - name: Restore Lang source
+      - name: Restore verified runtime sources
         shell: pwsh
         run: |
           @'
           import base64,gzip,hashlib,pathlib
           root=pathlib.Path('_ci/fhd_expedition')
-          payload=root.joinpath('Lang.txt.gz.b64').read_text(encoding='utf-8').strip()
-          raw=gzip.decompress(base64.b64decode(payload))
-          actual=hashlib.sha256(raw).hexdigest()
-          expected='9e6dc1263a506485e1e55731289acf71d4a556b821ae387db8006f9e446d1f61'
-          if actual!=expected:
-              raise SystemExit('Lang SHA mismatch: '+actual)
-          root.joinpath('Lang.txt').write_bytes(raw)
-          print('Restored Lang bytes',len(raw),actual)
-          '@ | python -
-
-      - name: Move FHDExpedition executable tree to Main source
-        shell: pwsh
-        run: |
-          @'
-          from pathlib import Path
-          root=Path('_ci/fhd_expedition')
-          main_path=root/'Main.txt'
-          lang_path=root/'Lang.txt'
-          main=main_path.read_text(encoding='utf-8-sig')
-          lang=lang_path.read_text(encoding='utf-8-sig')
-
-          lines=lang.splitlines()
-          start=end=None
-          depth=0
-          for i,line in enumerate(lines):
-              if start is None and line.strip().startswith('Script ') and line.strip().endswith('{'):
-                  start=i
-                  depth=1
-                  continue
-              if start is not None:
-                  depth += line.count('{') - line.count('}')
-                  if depth == 0:
-                      end=i
-                      break
-          if start is None or end is None:
-              raise SystemExit('Top-level Script block not found in Lang source')
-          script='\n'.join(lines[start:end+1])+'\n'
-          lang_rest='\n'.join(lines[:start]+lines[end+1:]).lstrip('\n')+'\n'
-          if 'FHDExpedition ^{' not in script or 'Open ~{' not in script:
-              raise SystemExit('FHDExpedition/Open missing in extracted Script block')
-
-          mlines=main.splitlines()
-          if not mlines or not mlines[0].strip().startswith('Data '):
-              raise SystemExit('Main source does not begin with Data block')
-          depth=1
-          data_end=None
-          for i in range(1,len(mlines)):
-              depth += mlines[i].count('{') - mlines[i].count('}')
-              if depth == 0:
-                  data_end=i
-                  break
-          if data_end is None:
-              raise SystemExit('Top-level Data block end not found in Main')
-          new_main='\n'.join(mlines[:data_end+1])+'\n'+script+'\n'+'\n'.join(mlines[data_end+1:])+'\n'
-
-          main_path.write_text(new_main,encoding='utf-8-sig')
-          lang_path.write_text(lang_rest,encoding='utf-8-sig')
-
-          if 'FHDExpedition ^{' not in new_main or 'Open ~{' not in new_main:
-              raise SystemExit('Main source missing executable FHDExpedition/Open tree')
-          if 'FHDExpeditionProbe ^{' not in lang_rest:
-              raise SystemExit('Lang source lost FHDExpeditionProbe custom info')
-          print('Executable Script.FHDExpedition moved to Main.txt')
-          print('Main bytes',main_path.stat().st_size,'Lang bytes',lang_path.stat().st_size)
+          specs=(
+              ('MainMerged.gz.b64','Main.txt','3778687a77ea0073d5cd110229a14b9b8399ebb09c6c55bdd63d945e94c237b7'),
+              ('LangRuntime.gz.b64','Lang.txt','9c7457403550ecb922caee24916e90e34182806f9ccd2302b15b6f6d408fa7b6'),
+          )
+          for payload_name,out_name,expected in specs:
+              payload=root.joinpath(payload_name).read_text(encoding='utf-8').strip()
+              raw=gzip.decompress(base64.b64decode(payload))
+              actual=hashlib.sha256(raw).hexdigest()
+              if actual!=expected:
+                  raise SystemExit(f'{out_name} SHA mismatch: {actual}')
+              root.joinpath(out_name).write_bytes(raw)
+              print(out_name,len(raw),actual)
+          main=root.joinpath('Main.txt').read_text(encoding='utf-8-sig')
+          lang=root.joinpath('Lang.txt').read_text(encoding='utf-8-sig')
+          for marker in ('FHDExpedition ^{','Open ~{','NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{','FHDExpPlanetPicker'):
+              if marker not in main: raise SystemExit('Main source missing '+marker)
+          if 'FHDExpeditionProbe ^{' not in lang: raise SystemExit('Lang source missing FHDExpeditionProbe')
+          if 'FHDExpedition ^{' in lang: raise SystemExit('Executable FHDExpedition tree must not remain in Lang source')
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -107,7 +61,7 @@ jobs:
           if($eh -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw "EXE hash mismatch $eh"}
           Set-Content 'bpe_path.txt' $exe.FullName
 
-      - name: Build and reverse-convert
+      - name: Build DAT files and reverse-convert
         shell: pwsh
         run: |
           $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
@@ -140,7 +94,7 @@ jobs:
             Copy-Item $txt ("_ci/fhd_expedition/out/"+$name+".roundtrip.txt") -Force
           }
 
-      - name: Verify runtime paths in BlockPar output
+      - name: Verify final BlockPar output
         shell: pwsh
         run: |
           @'
@@ -153,44 +107,31 @@ jobs:
                   except UnicodeDecodeError:pass
               try:return raw.decode('utf-8-sig')
               except UnicodeDecodeError:return raw.decode('cp1251')
-
           main=read_text('_ci/fhd_expedition/out/Main.roundtrip.txt')
           lang=read_text('_ci/fhd_expedition/out/Lang.roundtrip.txt')
           cache=read_text('_ci/fhd_expedition/out/CacheData.roundtrip.txt')
-
-          required_main=(
-              'Data ^{','FHD_Expedition=1,Script.FHD_Expedition','Script ^{','FHDExpedition ^{','Open ~{',
-              'NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{',
-              'ML ^{','FHDExpPlanetPicker'
-          )
+          required_main=('FHD_Expedition=1,Script.FHD_Expedition','Script ^{','FHDExpedition ^{','Open ~{','NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{','ML ^{','FHDExpPlanetPicker')
           missing=[m for m in required_main if m not in main]
-          if missing:
-              raise SystemExit('Main.dat reverse conversion missing: '+', '.join(missing))
-          if 'FHDExpeditionProbe ^{' not in lang or 'ShipInfo ^{' not in lang:
-              raise SystemExit('Lang.dat reverse conversion missing probe ShipInfo')
-          if 'FHDExpedition ^{' in lang:
-              raise SystemExit('Executable FHDExpedition tree still duplicated in Lang.dat')
-          if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache:
-              raise SystemExit('CacheData mapping missing')
-          Path('_ci/fhd_expedition/out/RUNTIME_PATH_VALIDATION.txt').write_text(
-              'PASS\nScript.FHDExpedition.Open is physically in Main.dat after BlockParEditor roundtrip.\nWide planet picker is in Main.dat.\nProbe ShipInfo remains in Lang.dat.\n',encoding='utf-8')
-          print('Runtime-path validation PASS')
+          if missing: raise SystemExit('Main.dat reverse conversion missing: '+', '.join(missing))
+          if 'ShipInfo ^{' not in lang or 'FHDExpeditionProbe ^{' not in lang: raise SystemExit('Lang.dat reverse conversion missing probe ShipInfo')
+          if 'FHDExpedition ^{' in lang: raise SystemExit('Executable tree unexpectedly present in Lang.dat')
+          if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache: raise SystemExit('CacheData mapping missing')
+          Path('_ci/fhd_expedition/out/RUNTIME_PATH_VALIDATION.txt').write_text('PASS\nScript.FHDExpedition.Open is in Main.dat after official BlockParEditor reverse conversion.\nWide planet picker is in Main.dat.\nProbe ShipInfo remains in Lang.dat.\n',encoding='utf-8')
+          print('FINAL VALIDATION PASS')
           '@ | python -
 
-          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Script.FHDExpedition executable tree moved to Main.dat','DAT -> TXT validation: Script.FHDExpedition.Open PRESENT in Main.dat')
-          foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){
-            $report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"
-          }
+          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Script.FHDExpedition.Open is in Main.dat','DAT -> TXT validation: PASS')
+          foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){$report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
           $report | Set-Content '_ci/fhd_expedition/out/BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
 
-      - name: Commit generated files
+      - name: Commit generated DAT files
         shell: pwsh
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -f _ci/fhd_expedition/out
           if(!(git diff --cached --quiet)){
-            git commit -m 'Build FHD Expedition runtime tree in Main.dat [skip ci]'
+            git commit -m 'Build FHD Expedition Main runtime DATs [skip ci]'
             git push origin HEAD:fhd-expedition-wide-build
           }
 
