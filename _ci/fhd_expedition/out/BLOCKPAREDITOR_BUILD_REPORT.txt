@@ -1,7 +1,7 @@
 Official BlockParEditor 2.1
 Main.dat / Lang.dat: Main, Lang - HD
 CacheData.dat: CacheData - HD
-DAT -> TXT reverse conversion completed
-_ci/fhd_expedition/out/CFG/Main.dat | size=1946 | sha256=3e6478a1994db950eb563d8b5deb1bec8602a1fef65abd90c885949ea8f29c29
-_ci/fhd_expedition/out/CFG/Rus/Lang.dat | size=3403 | sha256=d72a6e42f0ee54a46dbb6c4048f42b37580540be659490c60656be110268092c
-_ci/fhd_expedition/out/CFG/CacheData.dat | size=108 | sha256=3ec8be3c8ed685e0e176a69e85a5da0f30907010765bc51a9d2002e3d3ecd5aa
+DAT -> TXT reverse conversion completed; see TREE_DIAGNOSTIC.txt
+_ci/fhd_expedition/out/CFG/Main.dat | size=1946 | sha256=34dfd8f2dfb8e1b917abf65d705ea3fea07574607b5ad61f8443dcd68544cb8e
+_ci/fhd_expedition/out/CFG/Rus/Lang.dat | size=3398 | sha256=a86d4c55434c8af5d7e8dd16bbff7a1f0a254937e06f34749379a7329b4df6fd
+_ci/fhd_expedition/out/CFG/CacheData.dat | size=108 | sha256=f1a5bb1840deea2c3991949dc0eddf66e3db314e45b5c3b4a3b984fa51968b01
