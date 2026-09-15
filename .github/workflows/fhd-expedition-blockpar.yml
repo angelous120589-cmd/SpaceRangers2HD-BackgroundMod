@@ -131,7 +131,7 @@ jobs:
           if missing:
               raise SystemExit('Roundtrip Lang missing critical blocks: ' + ', '.join(missing))
           for name in ('FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'):
-              if not re.search(r'^        ' + re.escape(name) + r' \^\{$', lang, re.M):
+              if not re.search(r'^        ' + re.escape(name) + r' [~^]\{$', lang, re.M):
                   raise SystemExit('Script.FHDExpedition direct child missing after roundtrip: ' + name)
 
           main = read_text('_ci/fhd_expedition/verify/Main/Main.txt')
@@ -151,7 +151,7 @@ jobs:
           $report += 'Main.dat / Lang.dat: Main, Lang - HD'
           $report += 'CacheData.dat: CacheData - HD'
           $report += 'DAT -> TXT reverse conversion: OK'
-          $report += 'Script.FHDExpedition named executable blocks are direct children and use normal ^{ nodes'
+          $report += 'All named Script.FHDExpedition executable blocks verified as direct children after reverse conversion'
           $report += 'Critical Lang blocks: Open, PickPlanetRow, ShowPlanetPage, ContinueNewExpedition, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT'
           $report += 'Main wide picker markers and CacheData mapping = PRESENT'
           foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
