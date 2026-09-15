@@ -1,0 +1,91 @@
+name: FHD Expedition BlockPar build
+
+on:
+  push:
+    branches: [fhd-expedition-wide-build]
+    paths:
+      - '.github/workflows/fhd-expedition-blockpar.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  blockpar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore FHD Expedition sources
+        shell: pwsh
+        run: |
+          $payload = @'
+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
+'@
+          [IO.File]::WriteAllBytes('sources.zip',[Convert]::FromBase64String($payload.Trim()))
+          $h=(Get-FileHash 'sources.zip' -Algorithm SHA256).Hash.ToLower()
+          if($h -ne 'ea22f504b92b586a027ad36e2345e46c94c820f6845785eaebfe859dd2af808e'){ throw "source payload hash mismatch: $h" }
+          Expand-Archive -Path 'sources.zip' -DestinationPath 'fhd_exp_build' -Force
+
+      - name: Download and verify official BlockParEditor 2.1
+        shell: pwsh
+        run: |
+          $url='https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip'
+          Invoke-WebRequest -Uri $url -OutFile 'BlockParEditor_2.1.zip'
+          $hash=(Get-FileHash 'BlockParEditor_2.1.zip' -Algorithm SHA256).Hash.ToLower()
+          if($hash -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){ throw "BlockParEditor ZIP hash mismatch: $hash" }
+          Expand-Archive -Path 'BlockParEditor_2.1.zip' -DestinationPath 'BlockParEditor' -Force
+          $exe=Get-ChildItem 'BlockParEditor' -Filter 'BlockParEditor.exe' -Recurse | Select-Object -First 1
+          if(-not $exe){ throw 'BlockParEditor.exe not found' }
+          $exeHash=(Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          if($exeHash -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){ throw "BlockParEditor EXE hash mismatch: $exeHash" }
+          Set-Content -Path 'bpe_path.txt' -Value $exe.FullName -Encoding UTF8
+
+      - name: Build DAT files through BlockParEditor
+        shell: pwsh
+        run: |
+          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
+          New-Item -ItemType Directory -Force 'dist' | Out-Null
+          New-Item -ItemType Directory -Force 'verify' | Out-Null
+          & $exe --cli --convert 'fhd_exp_build/Main.txt' 'dist/Main.dat'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'dist/Main.dat')){ throw 'Main.dat conversion failed' }
+          & $exe --cli --convert 'fhd_exp_build/Lang.txt' 'dist/Lang.dat'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'dist/Lang.dat')){ throw 'Lang.dat conversion failed' }
+          & $exe --cli --convert 'fhd_exp_build/CacheData.txt' 'dist/CacheData.dat'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'dist/CacheData.dat')){ throw 'CacheData.dat conversion failed' }
+
+          & $exe --cli --convert 'dist/Main.dat' 'verify/Main.roundtrip.txt'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'verify/Main.roundtrip.txt')){ throw 'Main reverse conversion failed' }
+          & $exe --cli --convert 'dist/Lang.dat' 'verify/Lang.roundtrip.txt'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'verify/Lang.roundtrip.txt')){ throw 'Lang reverse conversion failed' }
+          & $exe --cli --convert 'dist/CacheData.dat' 'verify/CacheData.roundtrip.txt'
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path 'verify/CacheData.roundtrip.txt')){ throw 'CacheData reverse conversion failed' }
+
+          $lines=@()
+          $lines += 'Official BlockParEditor 2.1 build'
+          $lines += 'BlockParEditor ZIP SHA256=d0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'
+          $lines += 'BlockParEditor EXE SHA256=84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'
+          foreach($f in @('dist/Main.dat','dist/Lang.dat','dist/CacheData.dat')){
+            $lines += "$f SHA256=$((Get-FileHash $f -Algorithm SHA256).Hash.ToLower()) size=$((Get-Item $f).Length)"
+          }
+          $lines += 'TXT -> DAT -> TXT reverse conversion: OK for all three files'
+          $lines | Set-Content 'BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fhd-expedition-blockpar
+          path: |
+            dist/*
+            verify/*
+            BLOCKPAREDITOR_BUILD_REPORT.txt
+
+      - name: Commit BlockParEditor outputs to build branch
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f dist verify BLOCKPAREDITOR_BUILD_REPORT.txt
+          git diff --cached --quiet
+          if($LASTEXITCODE -eq 0){ exit 0 }
+          git commit -m 'BlockParEditor 2.1 outputs [skip ci]'
+          git push
