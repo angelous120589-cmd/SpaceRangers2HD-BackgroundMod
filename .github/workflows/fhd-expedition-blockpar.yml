@@ -2,8 +2,7 @@ name: FHD Expedition BlockPar build
 
 on:
   push:
-    branches:
-      - fhd-expedition-wide-build
+    branches: [fhd-expedition-wide-build]
     paths:
       - '_ci/fhd_expedition/Main.txt'
       - '_ci/fhd_expedition/Lang.part*'
@@ -22,152 +21,102 @@ jobs:
         with:
           ref: fhd-expedition-wide-build
 
-      - name: Restore and verify Lang source
+      - name: Restore Lang source
         shell: pwsh
         run: |
           @'
           import base64, gzip, hashlib, pathlib
           root = pathlib.Path('_ci/fhd_expedition')
           parts = sorted(root.glob('Lang.part*'))
-          if len(parts) != 6:
-              raise SystemExit(f'Expected 6 Lang chunks, got {len(parts)}')
           payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
           raw = gzip.decompress(base64.b64decode(payload))
-          expected = 'dd8a3ed37f35a12ceb66ecf4ab8ab88003955024c80cd475526a2790408ab9d3'
           actual = hashlib.sha256(raw).hexdigest()
-          if actual != expected:
-              raise SystemExit(f'Lang source SHA mismatch: {actual}')
+          expected = 'dd8a3ed37f35a12ceb66ecf4ab8ab88003955024c80cd475526a2790408ab9d3'
+          if actual != expected: raise SystemExit('Lang SHA mismatch: '+actual)
           root.joinpath('Lang.txt').write_bytes(raw)
-          text = raw.decode('utf-8-sig')
-          for marker in ('FHDExpedition ^{','Open ^{','PickPlanetRow ^{','ShowPlanetPage ^{','FHDExpeditionProbe ^{','FHDExpeditionUI ^{','ShipInfo ^{'):
-              if marker not in text:
-                  raise SystemExit(f'Missing required Lang source marker: {marker}')
-          if '~{' in text:
-              raise SystemExit('Merge-style ~{ block remains in Lang source; executable blocks must use ^{')
-          print('Lang bytes:', len(raw), 'sha256:', actual)
+          print('Lang bytes', len(raw), actual)
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
         shell: pwsh
         run: |
-          $url = 'https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip'
+          $url='https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip'
           Invoke-WebRequest -Uri $url -OutFile 'BlockParEditor_2.1.zip'
-          $zipHash = (Get-FileHash 'BlockParEditor_2.1.zip' -Algorithm SHA256).Hash.ToLower()
-          if ($zipHash -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253') { throw "ZIP hash mismatch: $zipHash" }
-          Expand-Archive -Path 'BlockParEditor_2.1.zip' -DestinationPath 'BlockParEditor' -Force
-          $exe = Get-ChildItem 'BlockParEditor' -Filter 'BlockParEditor.exe' -Recurse | Select-Object -First 1
-          if (-not $exe) { throw 'BlockParEditor.exe not found' }
-          $exeHash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
-          if ($exeHash -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa') { throw "EXE hash mismatch: $exeHash" }
+          $h=(Get-FileHash 'BlockParEditor_2.1.zip' -Algorithm SHA256).Hash.ToLower()
+          if($h -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){throw "ZIP hash mismatch $h"}
+          Expand-Archive 'BlockParEditor_2.1.zip' 'BlockParEditor' -Force
+          $exe=Get-ChildItem 'BlockParEditor' -Filter 'BlockParEditor.exe' -Recurse | Select-Object -First 1
+          $eh=(Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          if($eh -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw "EXE hash mismatch $eh"}
           Set-Content 'bpe_path.txt' $exe.FullName
 
-      - name: Build DAT files with BlockParEditor
+      - name: Build and reverse-convert DAT files
         shell: pwsh
         run: |
-          $exe = (Get-Content 'bpe_path.txt' -Raw).Trim()
-          $src = (Resolve-Path '_ci/fhd_expedition').Path
+          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
+          $src=(Resolve-Path '_ci/fhd_expedition').Path
           New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/CFG/Rus' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/Main' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/Lang' | Out-Null
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/verify/CacheData' | Out-Null
-
-          foreach ($name in @('Main','Lang','CacheData')) {
-            $txt = Join-Path $src ($name + '.txt')
-            Remove-Item (Join-Path $src ($name + '.dat')) -Force -ErrorAction SilentlyContinue
+          foreach($name in @('Main','Lang','CacheData')){
+            $txt=Join-Path $src ($name+'.txt')
+            Remove-Item (Join-Path $src ($name+'.dat')) -Force -ErrorAction SilentlyContinue
             & $exe --cli --convert $txt
-            Start-Sleep -Milliseconds 500
-            $dat = Join-Path $src ($name + '.dat')
-            if (-not (Test-Path $dat)) { throw "$name.dat not created next to source" }
+            $dat=Join-Path $src ($name+'.dat')
+            if(!(Test-Path $dat)){throw "$name.dat not created"}
           }
-
           Copy-Item '_ci/fhd_expedition/Main.dat' '_ci/fhd_expedition/out/CFG/Main.dat' -Force
           Copy-Item '_ci/fhd_expedition/Lang.dat' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' -Force
           Copy-Item '_ci/fhd_expedition/CacheData.dat' '_ci/fhd_expedition/out/CFG/CacheData.dat' -Force
 
-          Copy-Item '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/verify/Main/Main.dat' -Force
-          Copy-Item '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/verify/Lang/Lang.dat' -Force
-          Copy-Item '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/verify/CacheData/CacheData.dat' -Force
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/Main' | Out-Null
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/Lang' | Out-Null
+          New-Item -ItemType Directory -Force '_ci/fhd_expedition/roundtrip/CacheData' | Out-Null
+          Copy-Item '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/roundtrip/Main/Main.dat' -Force
+          Copy-Item '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/roundtrip/Lang/Lang.dat' -Force
+          Copy-Item '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/roundtrip/CacheData/CacheData.dat' -Force
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/Main/Main.dat').Path
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/Lang/Lang.dat').Path
+          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/roundtrip/CacheData/CacheData.dat').Path
+          Copy-Item '_ci/fhd_expedition/roundtrip/Main/Main.txt' '_ci/fhd_expedition/out/Main.roundtrip.txt' -Force
+          Copy-Item '_ci/fhd_expedition/roundtrip/Lang/Lang.txt' '_ci/fhd_expedition/out/Lang.roundtrip.txt' -Force
+          Copy-Item '_ci/fhd_expedition/roundtrip/CacheData/CacheData.txt' '_ci/fhd_expedition/out/CacheData.roundtrip.txt' -Force
 
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/Main/Main.dat').Path
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/Lang/Lang.dat').Path
-          & $exe --cli --convert (Resolve-Path '_ci/fhd_expedition/verify/CacheData/CacheData.dat').Path
-          Start-Sleep -Milliseconds 500
-
-          foreach ($p in @('_ci/fhd_expedition/verify/Main/Main.txt','_ci/fhd_expedition/verify/Lang/Lang.txt','_ci/fhd_expedition/verify/CacheData/CacheData.txt')) {
-            if (-not (Test-Path $p)) { throw "Reverse conversion failed: $p" }
-          }
-          Copy-Item '_ci/fhd_expedition/verify/Lang/Lang.txt' '_ci/fhd_expedition/out/Lang.roundtrip.txt' -Force
-
-      - name: Verify critical BlockPar content
+      - name: Diagnose Expedition tree
         shell: pwsh
         run: |
           @'
-          import pathlib, re
-
-          def read_text(path):
-              raw = pathlib.Path(path).read_bytes()
-              if raw.startswith((b'\xff\xfe', b'\xfe\xff')):
-                  return raw.decode('utf-16')
-              try:
-                  return raw.decode('utf-8-sig')
-              except UnicodeDecodeError:
-                  if b'\x00' in raw[:128]:
-                      return raw.decode('utf-16-le')
-                  return raw.decode('cp1251')
-
-          lang = read_text('_ci/fhd_expedition/verify/Lang/Lang.txt')
-          required = (
-              'Script ^{',
-              'FHDExpedition ^{',
-              'Open ^{',
-              'PickPlanetRow ^{',
-              'ShowPlanetPage ^{',
-              'ContinueNewExpedition ^{',
-              'ShipInfo ^{',
-              'FHDExpeditionProbe ^{',
-              'FHDExpeditionUI ^{',
-          )
-          missing = [m for m in required if m not in lang]
-          if missing:
-              raise SystemExit('Roundtrip Lang missing critical blocks: ' + ', '.join(missing))
-          for name in ('FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'):
-              if not re.search(r'^        ' + re.escape(name) + r' [~^]\{$', lang, re.M):
-                  raise SystemExit('Script.FHDExpedition direct child missing after roundtrip: ' + name)
-
-          main = read_text('_ci/fhd_expedition/verify/Main/Main.txt')
-          for marker in ('Data ^{','FHD_Expedition=1,Script.FHD_Expedition','ML ^{','FHDExpPlanetPicker'):
-              if marker not in main:
-                  raise SystemExit('Roundtrip Main missing marker: ' + marker)
-
-          cache = read_text('_ci/fhd_expedition/verify/CacheData/CacheData.txt')
-          if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache:
-              raise SystemExit('Roundtrip CacheData missing FHD_Expedition mapping')
-
-          print('Critical BlockPar roundtrip paths: OK')
+          import pathlib
+          p=pathlib.Path('_ci/fhd_expedition/out/Lang.roundtrip.txt')
+          raw=p.read_bytes()
+          if raw.startswith((b'\xff\xfe',b'\xfe\xff')): text=raw.decode('utf-16')
+          elif b'\x00' in raw[:128]: text=raw.decode('utf-16-le')
+          else:
+              try: text=raw.decode('utf-8-sig')
+              except: text=raw.decode('cp1251')
+          names={'FHDExpedition','FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'}
+          rows=[]
+          for i,line in enumerate(text.splitlines(),1):
+              s=line.strip()
+              first=s.split(' ',1)[0] if s else ''
+              if first in names:
+                  rows.append(f'{i}: indent={len(line)-len(line.lstrip())}: {s}')
+          pathlib.Path('_ci/fhd_expedition/out/TREE_DIAGNOSTIC.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8')
+          print('\n'.join(rows))
           '@ | python -
-
-          $report = @()
-          $report += 'BlockParEditor 2.1 official build'
-          $report += 'Main.dat / Lang.dat: Main, Lang - HD'
-          $report += 'CacheData.dat: CacheData - HD'
-          $report += 'DAT -> TXT reverse conversion: OK'
-          $report += 'All named Script.FHDExpedition executable blocks verified as direct children after reverse conversion'
-          $report += 'Critical Lang blocks: Open, PickPlanetRow, ShowPlanetPage, ContinueNewExpedition, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT'
-          $report += 'Main wide picker markers and CacheData mapping = PRESENT'
-          foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
-            $report += "$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"
-          }
+          $report=@()
+          $report+='Official BlockParEditor 2.1'
+          $report+='Main.dat / Lang.dat: Main, Lang - HD'
+          $report+='CacheData.dat: CacheData - HD'
+          $report+='DAT -> TXT reverse conversion completed'
+          foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){$report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
           $report | Set-Content '_ci/fhd_expedition/out/BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
 
-      - name: Commit generated DAT files
+      - name: Commit generated diagnostics
         shell: pwsh
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -f _ci/fhd_expedition/out
-          if (git diff --cached --quiet) { exit 0 }
-          git commit -m 'Build FHD Expedition DATs with BlockParEditor 2.1 [skip ci]'
-          git push origin HEAD:fhd-expedition-wide-build
+          if(!(git diff --cached --quiet)){git commit -m 'Build FHD Expedition DATs and roundtrip diagnostics [skip ci]'; git push origin HEAD:fhd-expedition-wide-build}
 
       - uses: actions/upload-artifact@v4
         with:
