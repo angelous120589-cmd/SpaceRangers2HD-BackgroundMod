@@ -22,19 +22,35 @@ jobs:
         with:
           ref: fhd-expedition-wide-build
 
-      - name: Restore Lang source
+      - name: Restore and verify Lang source
         shell: pwsh
         run: |
           @'
-          import base64, gzip, pathlib
+          import base64, gzip, hashlib, pathlib
           root = pathlib.Path('_ci/fhd_expedition')
           parts = sorted(root.glob('Lang.part*'))
           if len(parts) != 6:
               raise SystemExit(f'Expected 6 Lang chunks, got {len(parts)}')
           payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
           raw = gzip.decompress(base64.b64decode(payload))
+          expected = '86b4b7c8add7b7cd28e8a9bde8ecfe9a1f087aa8c639fc794b3d29efed7ec564'
+          actual = hashlib.sha256(raw).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'Lang source SHA mismatch: {actual}')
           root.joinpath('Lang.txt').write_bytes(raw)
-          print('Lang bytes:', len(raw))
+          text = raw.decode('utf-8-sig')
+          for marker in (
+              'FHDExpedition ^{',
+              'Open ~{',
+              'PickPlanetRow ~{',
+              'ShowPlanetPage ~{',
+              'FHDExpeditionProbe ^{',
+              'FHDExpeditionUI ^{',
+              'ShipInfo ^{',
+          ):
+              if marker not in text:
+                  raise SystemExit(f'Missing required Lang source marker: {marker}')
+          print('Lang bytes:', len(raw), 'sha256:', actual)
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -87,11 +103,93 @@ jobs:
             if (-not (Test-Path $p)) { throw "Reverse conversion failed: $p" }
           }
 
+      - name: Verify BlockPar semantic roundtrip
+        shell: pwsh
+        run: |
+          @'
+          import pathlib, re
+
+          OPEN = re.compile(r'^\s*(.*?)\s+([\^~])\{\s*$')
+
+          def read_text(path):
+              raw = pathlib.Path(path).read_bytes()
+              for enc in ('utf-8-sig', 'cp1251', 'utf-16'):
+                  try:
+                      return raw.decode(enc)
+                  except UnicodeDecodeError:
+                      pass
+              raise SystemExit(f'Cannot decode {path}')
+
+          def parse(path):
+              root = {'name':'', 'op':'', 'entries':[]}
+              stack = [root]
+              for no, raw in enumerate(read_text(path).splitlines(), 1):
+                  line = raw.strip()
+                  if not line or line.startswith('//'):
+                      continue
+                  m = OPEN.match(raw)
+                  if m:
+                      node = {'name':m.group(1).strip(), 'op':m.group(2), 'entries':[]}
+                      stack[-1]['entries'].append(('n', node))
+                      stack.append(node)
+                      continue
+                  if line == '}':
+                      if len(stack) == 1:
+                          raise SystemExit(f'Extra }} in {path}:{no}')
+                      stack.pop()
+                      continue
+                  if '=' in line:
+                      key, value = line.split('=', 1)
+                      stack[-1]['entries'].append(('p', key.strip(), value))
+                      continue
+                  raise SystemExit(f'Unknown BlockPar line {path}:{no}: {raw!r}')
+              if len(stack) != 1:
+                  raise SystemExit(f'Unclosed BlockPar block in {path}')
+              return root
+
+          def canonical(node):
+              rows=[]
+              for e in node['entries']:
+                  if e[0]=='n':
+                      n=e[1]
+                      rows.append((n['name'].casefold(), ('n', n['name'], n['op'], canonical(n))))
+                  else:
+                      rows.append((e[1].casefold(), ('p', e[1], e[2])))
+              rows.sort(key=lambda x:x[0])
+              return tuple(v for _,v in rows)
+
+          pairs = [
+              ('_ci/fhd_expedition/Main.txt','_ci/fhd_expedition/verify/Main/Main.txt'),
+              ('_ci/fhd_expedition/Lang.txt','_ci/fhd_expedition/verify/Lang/Lang.txt'),
+              ('_ci/fhd_expedition/CacheData.txt','_ci/fhd_expedition/verify/CacheData/CacheData.txt'),
+          ]
+          for source, reverse in pairs:
+              if canonical(parse(source)) != canonical(parse(reverse)):
+                  raise SystemExit(f'Semantic roundtrip mismatch: {source} -> {reverse}')
+              print('Semantic roundtrip OK:', source)
+
+          lang = read_text('_ci/fhd_expedition/verify/Lang/Lang.txt')
+          required = (
+              'Script ^{',
+              'FHDExpedition ^{',
+              'Open ~{',
+              'PickPlanetRow ~{',
+              'ShowPlanetPage ~{',
+              'ShipInfo ^{',
+              'FHDExpeditionProbe ^{',
+              'FHDExpeditionUI ^{',
+          )
+          for marker in required:
+              if marker not in lang:
+                  raise SystemExit(f'Roundtrip Lang missing marker: {marker}')
+          '@ | python -
+
           $report = @()
           $report += 'BlockParEditor 2.1 official build'
           $report += 'Main.dat / Lang.dat: Main, Lang - HD'
           $report += 'CacheData.dat: CacheData - HD'
-          $report += 'DAT -> TXT reverse conversion: OK'
+          $report += 'DAT -> TXT semantic roundtrip: OK for Main, Lang, CacheData'
+          $report += 'Lang required blocks: Open, PickPlanetRow, ShowPlanetPage, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT'
           foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
             $report += "$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"
           }
