@@ -1,0 +1,3 @@
+﻿Script ~{
+    FHD_Expedition=Mods\FHD_MODS\FHD_Expedition\DATA\Script\FHD_Expedition.scr
+}
