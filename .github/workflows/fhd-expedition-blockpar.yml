@@ -6,7 +6,7 @@ on:
       - fhd-expedition-wide-build
     paths:
       - '_ci/fhd_expedition/Main.txt'
-      - '_ci/fhd_expedition/Lang.txt.gz.b64'
+      - '_ci/fhd_expedition/Lang.part*'
       - '_ci/fhd_expedition/CacheData.txt'
       - '.github/workflows/fhd-expedition-blockpar.yml'
   workflow_dispatch:
@@ -28,9 +28,13 @@ jobs:
           @'
           import base64, gzip, pathlib
           root = pathlib.Path('_ci/fhd_expedition')
-          payload = root.joinpath('Lang.txt.gz.b64').read_text(encoding='utf-8').strip()
-          root.joinpath('Lang.txt').write_bytes(gzip.decompress(base64.b64decode(payload)))
-          print('Lang bytes:', root.joinpath('Lang.txt').stat().st_size)
+          parts = sorted(root.glob('Lang.part*'))
+          if len(parts) != 6:
+              raise SystemExit(f'Expected 6 Lang chunks, got {len(parts)}')
+          payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+          raw = gzip.decompress(base64.b64decode(payload))
+          root.joinpath('Lang.txt').write_bytes(raw)
+          print('Lang bytes:', len(raw))
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -56,25 +60,22 @@ jobs:
 
           & $exe --cli --convert '_ci/fhd_expedition/Main.txt' '_ci/fhd_expedition/out/CFG/Main.dat'
           if (-not (Test-Path '_ci/fhd_expedition/out/CFG/Main.dat')) { throw 'Main.dat not created' }
-
           & $exe --cli --convert '_ci/fhd_expedition/Lang.txt' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat'
           if (-not (Test-Path '_ci/fhd_expedition/out/CFG/Rus/Lang.dat')) { throw 'Lang.dat not created' }
-
           & $exe --cli --convert '_ci/fhd_expedition/CacheData.txt' '_ci/fhd_expedition/out/CFG/CacheData.dat'
           if (-not (Test-Path '_ci/fhd_expedition/out/CFG/CacheData.dat')) { throw 'CacheData.dat not created' }
 
           & $exe --cli --convert '_ci/fhd_expedition/out/CFG/Main.dat' '_ci/fhd_expedition/verify/Main.roundtrip.txt'
           & $exe --cli --convert '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' '_ci/fhd_expedition/verify/Lang.roundtrip.txt'
           & $exe --cli --convert '_ci/fhd_expedition/out/CFG/CacheData.dat' '_ci/fhd_expedition/verify/CacheData.roundtrip.txt'
-
           foreach ($p in @('_ci/fhd_expedition/verify/Main.roundtrip.txt','_ci/fhd_expedition/verify/Lang.roundtrip.txt','_ci/fhd_expedition/verify/CacheData.roundtrip.txt')) {
             if (-not (Test-Path $p)) { throw "Reverse conversion failed: $p" }
           }
 
           $report = @()
           $report += 'BlockParEditor 2.1 official build'
-          $report += 'Main.dat / Lang.dat: Main, Lang - HD (filename-selected by official editor)'
-          $report += 'CacheData.dat: CacheData - HD (filename-selected by official editor)'
+          $report += 'Main.dat / Lang.dat: Main, Lang - HD'
+          $report += 'CacheData.dat: CacheData - HD'
           $report += 'DAT -> TXT reverse conversion: OK'
           foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
             $report += "$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"
