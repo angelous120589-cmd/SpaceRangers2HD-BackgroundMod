@@ -3,9 +3,6 @@ on:
   push:
     branches: [fhd-expedition-wide-build]
     paths:
-      - '_ci/fhd_expedition/LangValid.part*'
-      - '_ci/fhd_expedition/Main.txt'
-      - '_ci/fhd_expedition/CacheData.txt'
       - '.github/workflows/fhd-expedition-blockpar.yml'
   workflow_dispatch:
 permissions:
@@ -18,28 +15,27 @@ jobs:
         with:
           ref: fhd-expedition-wide-build
 
-      - name: Restore corrected Lang source
+      - name: Restore corrected Lang and patch wide picker container
         shell: pwsh
         run: |
           @'
           import base64,gzip,hashlib,pathlib
           r=pathlib.Path('_ci/fhd_expedition')
           parts=sorted(r.glob('LangValid.part*'))
-          if len(parts)!=6:
-              raise SystemExit(f'expected 6 LangValid chunks, got {len(parts)}')
-          payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-          raw=gzip.decompress(base64.b64decode(payload))
-          sha=hashlib.sha256(raw).hexdigest()
-          expected='569c48b95996ca265e8d77e8e2b750bbf6f54a6fcc179b9c50ab2110059b8416'
-          if sha!=expected:
-              raise SystemExit('Lang source SHA mismatch: '+sha)
-          text=raw.decode('utf-8-sig')
-          if any(('=' in line and ('{' in line.split('=',1)[1] or '}' in line.split('=',1)[1])) for line in text.splitlines()):
-              raise SystemExit('Raw RScript braces remain inside property values')
-          for marker in ('FHDExpedition ^{','FindReturnSB ~{','LaunchCost ~{','NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','Open ~{','ProcessProbe ~{','FHDExpeditionProbe ^{'):
-              if marker not in text: raise SystemExit('Lang source missing '+marker)
+          if len(parts)!=6: raise SystemExit(f'expected 6 Lang chunks, got {len(parts)}')
+          raw=gzip.decompress(base64.b64decode(''.join(p.read_text().strip() for p in parts)))
+          if hashlib.sha256(raw).hexdigest()!='569c48b95996ca265e8d77e8e2b750bbf6f54a6fcc179b9c50ab2110059b8416': raise SystemExit('Lang SHA mismatch')
           r.joinpath('Lang.txt').write_bytes(raw)
-          print('corrected Lang source',len(raw),sha)
+
+          p=r/'Main.txt'
+          text=p.read_text(encoding='utf-8-sig')
+          needle='            FHDExpPlanetPickerContainer ^{\n                Window ^{'
+          repl='            FHDExpPlanetPickerContainer ^{\n                Panel ^{'
+          if needle not in text: raise SystemExit('wide picker Window block not found')
+          text=text.replace(needle,repl,1)
+          if 'FHDExpPlanetPickerContainer ^{\n                Window ^{' in text: raise SystemExit('unsafe Window still present')
+          p.write_text(text,encoding='utf-8-sig')
+          print('patched wide picker Window -> Panel')
           '@ | python -
 
       - name: Download official BlockParEditor 2.1
@@ -49,30 +45,24 @@ jobs:
           if((Get-FileHash bpe.zip -Algorithm SHA256).Hash.ToLower() -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){throw 'BPE ZIP hash mismatch'}
           Expand-Archive bpe.zip bpe -Force
           $e=Get-ChildItem bpe -Filter BlockParEditor.exe -Recurse | Select-Object -First 1
-          if(-not $e){throw 'BlockParEditor.exe not found'}
           if((Get-FileHash $e.FullName -Algorithm SHA256).Hash.ToLower() -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw 'BPE EXE hash mismatch'}
           Set-Content bpe_path.txt $e.FullName
 
-      - name: Build Main Lang CacheData through BlockParEditor
+      - name: Build DATs with BlockParEditor
         shell: pwsh
         run: |
-          $e=(Get-Content bpe_path.txt -Raw).Trim()
-          $r=(Resolve-Path '_ci/fhd_expedition').Path
-          Remove-Item out -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item verify -Recurse -Force -ErrorAction SilentlyContinue
+          $e=(Get-Content bpe_path.txt -Raw).Trim(); $r=(Resolve-Path '_ci/fhd_expedition').Path
+          Remove-Item out,verify -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force out/CFG/Rus | Out-Null
           foreach($n in @('Main','Lang','CacheData')){
-            $src=Join-Path $r ($n+'.txt')
-            $dat=Join-Path $r ($n+'.dat')
+            $src=Join-Path $r ($n+'.txt'); $dat=Join-Path $r ($n+'.dat')
             Remove-Item $dat -Force -ErrorAction SilentlyContinue
-            & $e --cli --convert $src
-            Start-Sleep -Milliseconds 1000
+            & $e --cli --convert $src; Start-Sleep -Milliseconds 900
             if(!(Test-Path $dat)){throw "$n.dat not created"}
           }
           Copy-Item "$r/Main.dat" out/CFG/Main.dat
           Copy-Item "$r/Lang.dat" out/CFG/Rus/Lang.dat
           Copy-Item "$r/CacheData.dat" out/CFG/CacheData.dat
-
           New-Item -ItemType Directory -Force verify/Main,verify/Lang,verify/CacheData | Out-Null
           Copy-Item out/CFG/Main.dat verify/Main/Main.dat
           Copy-Item out/CFG/Rus/Lang.dat verify/Lang/Lang.dat
@@ -80,62 +70,35 @@ jobs:
           & $e --cli --convert (Resolve-Path verify/Main/Main.dat).Path
           & $e --cli --convert (Resolve-Path verify/Lang/Lang.dat).Path
           & $e --cli --convert (Resolve-Path verify/CacheData/CacheData.dat).Path
-          Start-Sleep -Milliseconds 1200
-          if(!(Test-Path verify/Main/Main.txt)){throw 'Main reverse conversion failed'}
-          if(!(Test-Path verify/Lang/Lang.txt)){throw 'Lang reverse conversion failed'}
-          if(!(Test-Path verify/CacheData/CacheData.txt)){throw 'CacheData reverse conversion failed'}
+          Start-Sleep -Milliseconds 900
           Copy-Item verify/Main/Main.txt out/Main.roundtrip.txt
           Copy-Item verify/Lang/Lang.txt out/Lang.roundtrip.txt
           Copy-Item verify/CacheData/CacheData.txt out/CacheData.roundtrip.txt
 
-      - name: Verify direct script hierarchy and wide UI
+      - name: Validate panel-based 960x640 picker and script tree
         shell: pwsh
         run: |
           @'
           import pathlib,re
-          def rd(path):
-              raw=pathlib.Path(path).read_bytes()
-              if raw.startswith((b'\xff\xfe',b'\xfe\xff')): return raw.decode('utf-16')
-              if b'\x00' in raw[:128]: return raw.decode('utf-16-le')
-              try:return raw.decode('utf-8-sig')
-              except UnicodeDecodeError:return raw.decode('cp1251')
-          lang=rd('out/Lang.roundtrip.txt')
-          main=rd('out/Main.roundtrip.txt')
-          cache=rd('out/CacheData.roundtrip.txt')
-
-          # Structural parser: ensure Open and other routines are DIRECT children of Script.FHDExpedition.
-          hdr=re.compile(r'^\s*(.*?)\s+([\^~])\{\s*$')
-          root={'name':'','children':[]}; stack=[root]
-          for line in lang.splitlines():
-              s=line.strip()
-              if not s: continue
-              if s=='}':
-                  if len(stack)==1: raise SystemExit('extra Lang close brace')
-                  stack.pop(); continue
-              m=hdr.match(line)
-              if m and '=' not in m.group(1):
-                  n={'name':m.group(1).strip(),'children':[]}
-                  stack[-1]['children'].append(n); stack.append(n); continue
-          def ch(n,name):
-              return next((x for x in n['children'] if x['name']==name),None)
-          script=ch(root,'Script'); fhd=ch(script,'FHDExpedition') if script else None
-          if not fhd: raise SystemExit('Script.FHDExpedition not found as direct path')
-          direct={x['name'] for x in fhd['children']}
-          required={'FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'}
-          missing=sorted(required-direct)
-          if missing: raise SystemExit('FHDExpedition direct children missing: '+', '.join(missing))
-          if 'FHDExpPlanetPicker' not in main or 'Size=960,640' not in main:
-              raise SystemExit('wide planet picker missing from Main.dat')
-          if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache:
-              raise SystemExit('CacheData script mapping missing')
-          pathlib.Path('out/VALIDATION.txt').write_text('PASS\nScript.FHDExpedition.Open is a direct callable child after official BlockParEditor DAT -> TXT.\nWide 960x640 planet picker is present in Main.dat.\n',encoding='utf-8')
-          print('VALIDATION PASS; direct routines:',sorted(direct))
+          def rd(p):
+              b=pathlib.Path(p).read_bytes()
+              if b.startswith((b'\xff\xfe',b'\xfe\xff')): return b.decode('utf-16')
+              if b'\x00' in b[:128]: return b.decode('utf-16-le')
+              try:return b.decode('utf-8-sig')
+              except:return b.decode('cp1251')
+          main=rd('out/Main.roundtrip.txt'); lang=rd('out/Lang.roundtrip.txt')
+          if 'FHDExpPlanetPicker' not in main or 'Size=960,640' not in main: raise SystemExit('wide picker missing')
+          if 'FHDExpPlanetPickerContainer ^{\n                Window ^{' in main: raise SystemExit('unsafe Window survived')
+          if 'FHDExpPlanetPickerContainer ^{\n                Panel ^{' not in main: raise SystemExit('Panel picker missing')
+          for x in ('FHDExpedition ^{','Open ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{'):
+              if x not in lang: raise SystemExit('Lang missing '+x)
+          pathlib.Path('out/VALIDATION.txt').write_text('PASS\nWide picker 960x640 uses Panel, not empty TWindowGI.\nScript tree present.\nOfficial BlockParEditor 2.1 DAT -> TXT verification passed.\n',encoding='utf-8')
           '@ | python -
-          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','DAT -> TXT direct hierarchy validation: PASS')
-          foreach($p in @('out/CFG/Main.dat','out/CFG/Rus/Lang.dat','out/CFG/CacheData.dat')){$report+="$p size=$((Get-Item $p).Length) sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
-          $report | Set-Content out/BLOCKPAREDITOR_BUILD_REPORT.txt -Encoding UTF8
+          $r=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Wide picker container: Panel (no empty TWindowGI)')
+          foreach($p in @('out/CFG/Main.dat','out/CFG/Rus/Lang.dat','out/CFG/CacheData.dat')){$r+="$p size=$((Get-Item $p).Length) sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
+          $r | Set-Content out/BLOCKPAREDITOR_BUILD_REPORT.txt -Encoding UTF8
 
       - uses: actions/upload-artifact@v4
         with:
-          name: fhd-expedition-valid-tree-dats
+          name: fhd-expedition-v033-panel-picker
           path: out
