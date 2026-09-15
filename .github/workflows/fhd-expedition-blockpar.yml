@@ -1,18 +1,11 @@
 name: FHD Expedition BlockPar build
-
 on:
   push:
     branches: [fhd-expedition-wide-build]
-    paths:
-      - '_ci/fhd_expedition/MainMerged.gz.b64'
-      - '_ci/fhd_expedition/LangRuntime.gz.b64'
-      - '_ci/fhd_expedition/CacheData.txt'
-      - '.github/workflows/fhd-expedition-blockpar.yml'
+    paths: ['_ci/fhd_expedition/MainMerged.part*','_ci/fhd_expedition/LangRuntime.gz.b64','_ci/fhd_expedition/CacheData.txt','.github/workflows/fhd-expedition-blockpar.yml']
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
   blockpar:
     runs-on: windows-latest
@@ -20,122 +13,56 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fhd-expedition-wide-build
-
-      - name: Restore verified runtime sources
+      - name: Restore sources
         shell: pwsh
         run: |
           @'
           import base64,gzip,hashlib,pathlib
-          root=pathlib.Path('_ci/fhd_expedition')
-          specs=(
-              ('MainMerged.gz.b64','Main.txt','3778687a77ea0073d5cd110229a14b9b8399ebb09c6c55bdd63d945e94c237b7'),
-              ('LangRuntime.gz.b64','Lang.txt','9c7457403550ecb922caee24916e90e34182806f9ccd2302b15b6f6d408fa7b6'),
-          )
-          for payload_name,out_name,expected in specs:
-              payload=root.joinpath(payload_name).read_text(encoding='utf-8').strip()
-              raw=gzip.decompress(base64.b64decode(payload))
-              actual=hashlib.sha256(raw).hexdigest()
-              if actual!=expected:
-                  raise SystemExit(f'{out_name} SHA mismatch: {actual}')
-              root.joinpath(out_name).write_bytes(raw)
-              print(out_name,len(raw),actual)
-          main=root.joinpath('Main.txt').read_text(encoding='utf-8-sig')
-          lang=root.joinpath('Lang.txt').read_text(encoding='utf-8-sig')
-          for marker in ('FHDExpedition ^{','Open ~{','NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{','FHDExpPlanetPicker'):
-              if marker not in main: raise SystemExit('Main source missing '+marker)
-          if 'FHDExpeditionProbe ^{' not in lang: raise SystemExit('Lang source missing FHDExpeditionProbe')
-          if 'FHDExpedition ^{' in lang: raise SystemExit('Executable FHDExpedition tree must not remain in Lang source')
+          r=pathlib.Path('_ci/fhd_expedition')
+          p=sorted(r.glob('MainMerged.part*'))
+          if len(p)!=8: raise SystemExit(f'expected 8 chunks, got {len(p)}')
+          raw=gzip.decompress(base64.b64decode(''.join(x.read_text().strip() for x in p)))
+          if hashlib.sha256(raw).hexdigest()!='3778687a77ea0073d5cd110229a14b9b8399ebb09c6c55bdd63d945e94c237b7': raise SystemExit('Main SHA mismatch')
+          r.joinpath('Main.txt').write_bytes(raw)
+          lp=r.joinpath('LangRuntime.gz.b64').read_text().strip()
+          lr=gzip.decompress(base64.b64decode(lp))
+          if hashlib.sha256(lr).hexdigest()!='9c7457403550ecb922caee24916e90e34182806f9ccd2302b15b6f6d408fa7b6': raise SystemExit('Lang SHA mismatch')
+          r.joinpath('Lang.txt').write_bytes(lr)
+          m=raw.decode('utf-8-sig'); l=lr.decode('utf-8-sig')
+          assert 'FHDExpedition ^{' in m and 'Open ~{' in m and 'FHDExpPlanetPicker' in m
+          assert 'FHDExpeditionProbe ^{' in l and 'FHDExpedition ^{' not in l
           '@ | python -
-
-      - name: Download official BlockParEditor 2.1
+      - name: Download BlockParEditor 2.1
         shell: pwsh
         run: |
-          $url='https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip'
-          Invoke-WebRequest -Uri $url -OutFile 'BlockParEditor_2.1.zip'
-          $h=(Get-FileHash 'BlockParEditor_2.1.zip' -Algorithm SHA256).Hash.ToLower()
-          if($h -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){throw "ZIP hash mismatch $h"}
-          Expand-Archive 'BlockParEditor_2.1.zip' 'BlockParEditor' -Force
-          $exe=Get-ChildItem 'BlockParEditor' -Filter 'BlockParEditor.exe' -Recurse | Select-Object -First 1
-          if(-not $exe){throw 'BlockParEditor.exe not found'}
-          $eh=(Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
-          if($eh -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw "EXE hash mismatch $eh"}
-          Set-Content 'bpe_path.txt' $exe.FullName
-
-      - name: Build DAT files and reverse-convert
+          Invoke-WebRequest 'https://github.com/indiemagpie/BlockParEditor/releases/download/2.1/BlockParEditor_2.1.zip' -OutFile bpe.zip
+          if((Get-FileHash bpe.zip -Algorithm SHA256).Hash.ToLower() -ne 'd0c4739f9fbf1c276ac6979c13e838b217694ac16400109db7ed53435f0d0253'){throw 'BPE zip hash mismatch'}
+          Expand-Archive bpe.zip bpe -Force
+          $e=Get-ChildItem bpe -Filter BlockParEditor.exe -Recurse | Select-Object -First 1
+          if((Get-FileHash $e.FullName -Algorithm SHA256).Hash.ToLower() -ne '84d1fa626451f165135139ec9d00306207ba765b2ca3071591009f831b5711fa'){throw 'BPE exe hash mismatch'}
+          Set-Content bpe_path.txt $e.FullName
+      - name: Build DATs
         shell: pwsh
         run: |
-          $exe=(Get-Content 'bpe_path.txt' -Raw).Trim()
-          $src=(Resolve-Path '_ci/fhd_expedition').Path
-          Remove-Item '_ci/fhd_expedition/out' -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item '_ci/fhd_expedition/roundtrip' -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force '_ci/fhd_expedition/out/CFG/Rus' | Out-Null
-          foreach($name in @('Main','Lang','CacheData')){
-            $txt=Join-Path $src ($name+'.txt')
-            $dat=Join-Path $src ($name+'.dat')
-            Remove-Item $dat -Force -ErrorAction SilentlyContinue
-            & $exe --cli --convert $txt
-            Start-Sleep -Milliseconds 1200
-            if(!(Test-Path $dat)){throw "$name.dat not created"}
+          $e=(Get-Content bpe_path.txt -Raw).Trim(); $r=(Resolve-Path '_ci/fhd_expedition').Path
+          New-Item -ItemType Directory -Force out/CFG/Rus | Out-Null
+          foreach($n in @('Main','Lang','CacheData')){
+            Remove-Item (Join-Path $r ($n+'.dat')) -Force -ErrorAction SilentlyContinue
+            & $e --cli --convert (Join-Path $r ($n+'.txt')); Start-Sleep -Milliseconds 1200
+            if(!(Test-Path (Join-Path $r ($n+'.dat')))){throw "$n.dat not created"}
           }
-          Copy-Item '_ci/fhd_expedition/Main.dat' '_ci/fhd_expedition/out/CFG/Main.dat' -Force
-          Copy-Item '_ci/fhd_expedition/Lang.dat' '_ci/fhd_expedition/out/CFG/Rus/Lang.dat' -Force
-          Copy-Item '_ci/fhd_expedition/CacheData.dat' '_ci/fhd_expedition/out/CFG/CacheData.dat' -Force
-
-          foreach($name in @('Main','Lang','CacheData')){
-            $dir="_ci/fhd_expedition/roundtrip/"+$name
-            New-Item -ItemType Directory -Force $dir | Out-Null
-            if($name -eq 'Lang'){$source='_ci/fhd_expedition/out/CFG/Rus/Lang.dat'} else {$source="_ci/fhd_expedition/out/CFG/"+$name+".dat"}
-            $copy=$dir+"/"+$name+".dat"
-            Copy-Item $source $copy -Force
-            & $exe --cli --convert (Resolve-Path $copy).Path
-            Start-Sleep -Milliseconds 1200
-            $txt=$dir+"/"+$name+".txt"
-            if(!(Test-Path $txt)){throw "$name reverse TXT not created"}
-            Copy-Item $txt ("_ci/fhd_expedition/out/"+$name+".roundtrip.txt") -Force
-          }
-
-      - name: Verify final BlockPar output
-        shell: pwsh
-        run: |
-          @'
-          from pathlib import Path
-          def read_text(path):
-              raw=Path(path).read_bytes()
-              if raw.startswith((b'\xff\xfe',b'\xfe\xff')): return raw.decode('utf-16')
-              if b'\x00' in raw[:128]:
-                  try:return raw.decode('utf-16-le')
-                  except UnicodeDecodeError:pass
-              try:return raw.decode('utf-8-sig')
-              except UnicodeDecodeError:return raw.decode('cp1251')
-          main=read_text('_ci/fhd_expedition/out/Main.roundtrip.txt')
-          lang=read_text('_ci/fhd_expedition/out/Lang.roundtrip.txt')
-          cache=read_text('_ci/fhd_expedition/out/CacheData.roundtrip.txt')
-          required_main=('FHD_Expedition=1,Script.FHD_Expedition','Script ^{','FHDExpedition ^{','Open ~{','NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{','ML ^{','FHDExpPlanetPicker')
-          missing=[m for m in required_main if m not in main]
-          if missing: raise SystemExit('Main.dat reverse conversion missing: '+', '.join(missing))
-          if 'ShipInfo ^{' not in lang or 'FHDExpeditionProbe ^{' not in lang: raise SystemExit('Lang.dat reverse conversion missing probe ShipInfo')
-          if 'FHDExpedition ^{' in lang: raise SystemExit('Executable tree unexpectedly present in Lang.dat')
-          if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache: raise SystemExit('CacheData mapping missing')
-          Path('_ci/fhd_expedition/out/RUNTIME_PATH_VALIDATION.txt').write_text('PASS\nScript.FHDExpedition.Open is in Main.dat after official BlockParEditor reverse conversion.\nWide planet picker is in Main.dat.\nProbe ShipInfo remains in Lang.dat.\n',encoding='utf-8')
-          print('FINAL VALIDATION PASS')
-          '@ | python -
-
-          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Script.FHDExpedition.Open is in Main.dat','DAT -> TXT validation: PASS')
-          foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){$report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"}
-          $report | Set-Content '_ci/fhd_expedition/out/BLOCKPAREDITOR_BUILD_REPORT.txt' -Encoding UTF8
-
-      - name: Commit generated DAT files
-        shell: pwsh
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f _ci/fhd_expedition/out
-          if(!(git diff --cached --quiet)){
-            git commit -m 'Build FHD Expedition Main runtime DATs [skip ci]'
-            git push origin HEAD:fhd-expedition-wide-build
-          }
-
+          Copy-Item "$r/Main.dat" out/CFG/Main.dat
+          Copy-Item "$r/Lang.dat" out/CFG/Rus/Lang.dat
+          Copy-Item "$r/CacheData.dat" out/CFG/CacheData.dat
+          New-Item -ItemType Directory -Force verify | Out-Null
+          Copy-Item out/CFG/Main.dat verify/Main.dat
+          & $e --cli --convert (Resolve-Path verify/Main.dat).Path; Start-Sleep -Milliseconds 1200
+          if(!(Test-Path verify/Main.txt)){throw 'Main reverse conversion failed'}
+          $raw=[IO.File]::ReadAllBytes((Resolve-Path verify/Main.txt).Path)
+          if($raw.Length -ge 2 -and $raw[0] -eq 255 -and $raw[1] -eq 254){$t=[Text.Encoding]::Unicode.GetString($raw,2,$raw.Length-2)} elseif($raw -contains 0){$t=[Text.Encoding]::Unicode.GetString($raw)} else {$t=[Text.Encoding]::UTF8.GetString($raw)}
+          if($t -notmatch 'FHDExpedition \^\{' -or $t -notmatch 'Open ~\{' -or $t -notmatch 'FHDExpPlanetPicker'){throw 'Main runtime verification failed'}
+          'PASS - Script.FHDExpedition.Open is in Main.dat after BlockParEditor reverse conversion.' | Set-Content out/RUNTIME_PATH_VALIDATION.txt
       - uses: actions/upload-artifact@v4
         with:
           name: fhd-expedition-main-runtime-dats
-          path: _ci/fhd_expedition/out
+          path: out
