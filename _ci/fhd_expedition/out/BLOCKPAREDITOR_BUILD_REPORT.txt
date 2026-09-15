@@ -1,0 +1,7 @@
+BlockParEditor 2.1 official build
+Main.dat / Lang.dat: Main, Lang - HD
+CacheData.dat: CacheData - HD
+DAT -> TXT reverse conversion: OK
+_ci/fhd_expedition/out/CFG/Main.dat | size=1946 | sha256=dd762d8fdf7e1d77b14e40ebc74a6903f4e0bfda1ccfc83eb4ee9cf87254c921
+_ci/fhd_expedition/out/CFG/Rus/Lang.dat | size=3394 | sha256=2b553532ded40b58b10c096f5dbf6c34a2a947216cbfe2dbdd4f27e026f31333
+_ci/fhd_expedition/out/CFG/CacheData.dat | size=108 | sha256=aab28bbb6644f11ebc1aca95987a1d1d68869ec820916ffb7a9e7106181e9d2a
