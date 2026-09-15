@@ -102,7 +102,7 @@ jobs:
         shell: pwsh
         run: |
           @'
-          import pathlib
+          import pathlib, re
 
           def read_text(path):
               raw = pathlib.Path(path).read_bytes()
@@ -130,8 +130,9 @@ jobs:
           missing = [m for m in required if m not in lang]
           if missing:
               raise SystemExit('Roundtrip Lang missing critical blocks: ' + ', '.join(missing))
-          if '~{' in lang:
-              raise SystemExit('Roundtrip Lang still contains merge-style ~{ blocks')
+          for name in ('FindReturnSB','LaunchCost','NewExpedition','EnsurePlanetUI','ShowPlanetPage','ChangePlanetPage','PickPlanetRow','ContinueNewExpedition','Open','FindPlanetById','NormalizeProbeRecord','ProcessProbe','ReturnProbe','ShowActive'):
+              if not re.search(r'^        ' + re.escape(name) + r' \^\{$', lang, re.M):
+                  raise SystemExit('Script.FHDExpedition direct child missing after roundtrip: ' + name)
 
           main = read_text('_ci/fhd_expedition/verify/Main/Main.txt')
           for marker in ('Data ^{','FHD_Expedition=1,Script.FHD_Expedition','ML ^{','FHDExpPlanetPicker'):
@@ -142,7 +143,7 @@ jobs:
           if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache:
               raise SystemExit('Roundtrip CacheData missing FHD_Expedition mapping')
 
-          print('Critical BlockPar roundtrip markers: OK')
+          print('Critical BlockPar roundtrip paths: OK')
           '@ | python -
 
           $report = @()
@@ -150,7 +151,7 @@ jobs:
           $report += 'Main.dat / Lang.dat: Main, Lang - HD'
           $report += 'CacheData.dat: CacheData - HD'
           $report += 'DAT -> TXT reverse conversion: OK'
-          $report += 'Executable Lang blocks use normal ^{ BlockPar nodes; no ~{ merge nodes remain'
+          $report += 'Script.FHDExpedition named executable blocks are direct children and use normal ^{ nodes'
           $report += 'Critical Lang blocks: Open, PickPlanetRow, ShowPlanetPage, ContinueNewExpedition, ShipInfo, FHDExpeditionProbe, FHDExpeditionUI = PRESENT'
           $report += 'Main wide picker markers and CacheData mapping = PRESENT'
           foreach ($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')) {
