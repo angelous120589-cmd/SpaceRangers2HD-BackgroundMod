@@ -5,7 +5,7 @@ on:
     branches: [fhd-expedition-wide-build]
     paths:
       - '_ci/fhd_expedition/Main.txt'
-      - '_ci/fhd_expedition/Lang.txt.gz.b64'
+      - '_ci/fhd_expedition/Lang.part*'
       - '_ci/fhd_expedition/CacheData.txt'
       - '.github/workflows/fhd-expedition-blockpar.yml'
   workflow_dispatch:
@@ -27,14 +27,14 @@ jobs:
           @'
           import base64, gzip, hashlib, pathlib
           root=pathlib.Path('_ci/fhd_expedition')
-          payload=root.joinpath('Lang.txt.gz.b64').read_text(encoding='utf-8').strip()
+          parts=sorted(root.glob('Lang.part*'))
+          if len(parts)!=6: raise SystemExit(f'Expected 6 Lang parts, got {len(parts)}')
+          payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
           raw=gzip.decompress(base64.b64decode(payload))
           actual=hashlib.sha256(raw).hexdigest()
           expected='9e6dc1263a506485e1e55731289acf71d4a556b821ae387db8006f9e446d1f61'
           if actual!=expected: raise SystemExit('Lang SHA mismatch: '+actual)
           root.joinpath('Lang.txt').write_bytes(raw)
-          text=raw.decode('utf-8-sig')
-          if '= {' in text or '=}' in text: pass
           print('Lang bytes',len(raw),actual)
           '@ | python -
 
@@ -101,12 +101,10 @@ jobs:
           pathlib.Path('_ci/fhd_expedition/out/TREE_DIAGNOSTIC.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8')
           found={}
           for row in rows:
-              tail=row.split(': ',2)[2]
-              nm=tail.split(' ',1)[0]
+              tail=row.split(': ',2)[2]; nm=tail.split(' ',1)[0]
               found[nm]=int(row.split('indent=',1)[1].split(':',1)[0])
           bad=[n for n in names if found.get(n)!=8]
-          if found.get('FHDExpedition')!=4 or bad:
-              raise SystemExit('Bad Script.FHDExpedition tree. Direct children wrong: '+','.join(bad))
+          if found.get('FHDExpedition')!=4 or bad: raise SystemExit('Bad Script.FHDExpedition tree: '+','.join(bad))
           print('\n'.join(rows))
           '@ | python -
           $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','DAT -> TXT reverse conversion completed','Script.FHDExpedition.Open and all named runtime blocks verified as direct children')
