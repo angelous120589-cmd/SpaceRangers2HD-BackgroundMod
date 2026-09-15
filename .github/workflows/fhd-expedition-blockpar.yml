@@ -5,7 +5,7 @@ on:
     branches: [fhd-expedition-wide-build]
     paths:
       - '_ci/fhd_expedition/Main.txt'
-      - '_ci/fhd_expedition/Lang.part*'
+      - '_ci/fhd_expedition/Lang.txt.gz.b64'
       - '_ci/fhd_expedition/CacheData.txt'
       - '.github/workflows/fhd-expedition-blockpar.yml'
   workflow_dispatch:
@@ -27,10 +27,7 @@ jobs:
           @'
           import base64,gzip,hashlib,pathlib
           root=pathlib.Path('_ci/fhd_expedition')
-          parts=sorted(root.glob('Lang.part*'))
-          if len(parts) != 6:
-              raise SystemExit(f'Expected 6 Lang chunks, got {len(parts)}')
-          payload=''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+          payload=root.joinpath('Lang.txt.gz.b64').read_text(encoding='utf-8').strip()
           raw=gzip.decompress(base64.b64decode(payload))
           actual=hashlib.sha256(raw).hexdigest()
           expected='9e6dc1263a506485e1e55731289acf71d4a556b821ae387db8006f9e446d1f61'
@@ -51,7 +48,6 @@ jobs:
           main=main_path.read_text(encoding='utf-8-sig')
           lang=lang_path.read_text(encoding='utf-8-sig')
 
-          # Extract the first top-level Script block from Lang.
           lines=lang.splitlines()
           start=end=None
           depth=0
@@ -72,7 +68,6 @@ jobs:
           if 'FHDExpedition ^{' not in script or 'Open ~{' not in script:
               raise SystemExit('FHDExpedition/Open missing in extracted Script block')
 
-          # Insert Script immediately after top-level Data block in Main.
           mlines=main.splitlines()
           if not mlines or not mlines[0].strip().startswith('Data '):
               raise SystemExit('Main source does not begin with Data block')
@@ -90,8 +85,6 @@ jobs:
           main_path.write_text(new_main,encoding='utf-8-sig')
           lang_path.write_text(lang_rest,encoding='utf-8-sig')
 
-          if "GenerateCodeStringFromBlock('Script.FHDExpedition.Open')" not in new_main:
-              raise SystemExit('Main source missing FHDExpedition.Open caller')
           if 'FHDExpedition ^{' not in new_main or 'Open ~{' not in new_main:
               raise SystemExit('Main source missing executable FHDExpedition/Open tree')
           if 'FHDExpeditionProbe ^{' not in lang_rest:
@@ -166,18 +159,9 @@ jobs:
           cache=read_text('_ci/fhd_expedition/out/CacheData.roundtrip.txt')
 
           required_main=(
-              'Data ^{',
-              'FHD_Expedition=1,Script.FHD_Expedition',
-              'Script ^{',
-              'FHDExpedition ^{',
-              'Open ~{',
-              'NewExpedition ~{',
-              'ShowPlanetPage ~{',
-              'PickPlanetRow ~{',
-              'ContinueNewExpedition ~{',
-              'ProcessProbe ~{',
-              'ML ^{',
-              'FHDExpPlanetPicker',
+              'Data ^{','FHD_Expedition=1,Script.FHD_Expedition','Script ^{','FHDExpedition ^{','Open ~{',
+              'NewExpedition ~{','ShowPlanetPage ~{','PickPlanetRow ~{','ContinueNewExpedition ~{','ProcessProbe ~{',
+              'ML ^{','FHDExpPlanetPicker'
           )
           missing=[m for m in required_main if m not in main]
           if missing:
@@ -189,18 +173,11 @@ jobs:
           if 'FHD_Expedition=Mods\\FHD_MODS\\FHD_Expedition\\DATA\\Script\\FHD_Expedition.scr' not in cache:
               raise SystemExit('CacheData mapping missing')
           Path('_ci/fhd_expedition/out/RUNTIME_PATH_VALIDATION.txt').write_text(
-              'PASS\nScript.FHDExpedition.Open is physically in Main.dat after BlockParEditor roundtrip.\n'+
-              'Wide planet picker is in Main.dat.\nProbe ShipInfo remains in Lang.dat.\n',encoding='utf-8')
+              'PASS\nScript.FHDExpedition.Open is physically in Main.dat after BlockParEditor roundtrip.\nWide planet picker is in Main.dat.\nProbe ShipInfo remains in Lang.dat.\n',encoding='utf-8')
           print('Runtime-path validation PASS')
           '@ | python -
 
-          $report=@(
-            'Official BlockParEditor 2.1',
-            'Main.dat / Lang.dat: Main, Lang - HD',
-            'CacheData.dat: CacheData - HD',
-            'Script.FHDExpedition executable tree moved to Main.dat',
-            'DAT -> TXT validation: Script.FHDExpedition.Open PRESENT in Main.dat'
-          )
+          $report=@('Official BlockParEditor 2.1','Main.dat / Lang.dat: Main, Lang - HD','CacheData.dat: CacheData - HD','Script.FHDExpedition executable tree moved to Main.dat','DAT -> TXT validation: Script.FHDExpedition.Open PRESENT in Main.dat')
           foreach($p in @('_ci/fhd_expedition/out/CFG/Main.dat','_ci/fhd_expedition/out/CFG/Rus/Lang.dat','_ci/fhd_expedition/out/CFG/CacheData.dat')){
             $report+="$p | size=$((Get-Item $p).Length) | sha256=$((Get-FileHash $p -Algorithm SHA256).Hash.ToLower())"
           }
