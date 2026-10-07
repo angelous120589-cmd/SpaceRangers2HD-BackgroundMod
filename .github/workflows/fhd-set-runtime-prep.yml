@@ -1,0 +1,72 @@
+name: FHD SET runtime prep
+
+on:
+  push:
+    branches:
+      - fhd-set-runtime-build
+    paths:
+      - '.github/workflows/fhd-set-runtime-prep.yml'
+      - 'fhd-set-runtime/**'
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download current FHD_SET from Drive
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force work | Out-Null
+          $id = '1E6qmB9ierx0KIhKGiIO_fFepdWidfRQd'
+          $url = "https://drive.usercontent.google.com/download?id=$id&export=download&confirm=t"
+          curl.exe -L --fail --retry 3 -o work\FHD_SET.rar $url
+          Get-Item work\FHD_SET.rar | Format-List Name,Length,LastWriteTime
+
+      - name: Extract current mod
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $seven = 'C:\Program Files\7-Zip\7z.exe'
+          if (!(Test-Path $seven)) { throw '7-Zip not found' }
+          & $seven x -y -owork\mod work\FHD_SET.rar
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip extraction failed: $LASTEXITCODE" }
+          Get-ChildItem work\mod -Recurse | Select-Object FullName,Length
+
+      - name: Download BlockParEditor 2.2
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/indiemagpie/BlockParEditor/releases/download/2.2/BlockParEditor_2.2.zip'
+          curl.exe -L --fail --retry 3 -o work\BlockParEditor_2.2.zip $url
+          Expand-Archive -LiteralPath work\BlockParEditor_2.2.zip -DestinationPath work\bpe -Force
+          Get-ChildItem work\bpe -Recurse | Select-Object FullName,Length
+
+      - name: Show BlockParEditor CLI
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $cli = Get-ChildItem work\bpe -Recurse -Filter cli.txt | Select-Object -First 1
+          $exe = Get-ChildItem work\bpe -Recurse -Filter BlockParEditor.exe | Select-Object -First 1
+          if ($cli) {
+            Write-Host '===== cli.txt ====='
+            Get-Content -LiteralPath $cli.FullName -Raw
+          }
+          if ($exe) {
+            Write-Host '===== /? ====='
+            & $exe.FullName /?
+            Write-Host '===== -h ====='
+            & $exe.FullName -h
+          }
+
+      - name: Upload inspection files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fhd-set-runtime-prep
+          path: |
+            work/mod/**
+            work/bpe/**/cli.txt
+          if-no-files-found: error
