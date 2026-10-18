@@ -17,9 +17,13 @@ constexpr DWORD kCalcGalaxy     = 0x004D75BC;
 constexpr DWORD kCalcPlayerStar = 0x004D75D0;
 constexpr DWORD kThreadExecute  = 0x0072F91C;
 constexpr DWORD kThreadPointer  = 0x00881FD0;
+constexpr DWORD kProcessStarTurn = 0x0072F6C8;
+constexpr DWORD kThreadExecuteEnd = 0x0072F91C;
+constexpr DWORD kStarNextDay    = 0x00863998;
+constexpr DWORD kGenerationStage= 0x0081B7E8;
 constexpr DWORD kJobOffset      = 0x2C;
 constexpr wchar_t kId[] = L"FHD_FastNewGame";
-constexpr wchar_t kVersion[] = L"0.3.0";
+constexpr wchar_t kVersion[] = L"0.4.0";
 constexpr std::uint32_t kHostApi = 1;
 
 using LogFn = void (WINAPI*)(const wchar_t*, const wchar_t*);
@@ -55,6 +59,13 @@ struct Patch {
     bool installed = false;
 };
 std::array<Patch, 3> g_patches;
+Patch g_filmPatch;
+void* g_origNextDay = nullptr;
+volatile DWORD* g_generationStage = nullptr;
+bool g_profile = true;
+std::uint64_t g_galaxyTicks = 0, g_starTicks = 0;
+std::uint32_t g_galaxyCount = 0, g_starCount = 0;
+LARGE_INTEGER g_frequency = {};
 BYTE* g_base = nullptr;
 DWORD g_imageSize = 0;
 LogFn g_log = nullptr;
@@ -104,7 +115,9 @@ bool PrepareImage(HMODULE module, std::wstring& error) {
     if (g_imageSize < kThreadPointer - kImageBase + sizeof(void*)) {
         error = L"image too small for 2.1.2500 offsets"; return false;
     }
-    if (!IsExecutable(FromAddress(kGenerationStart), kGenerationEnd-kGenerationStart) ||
+    if (!IsExecutable(FromAddress(kProcessStarTurn), kThreadExecuteEnd-kProcessStarTurn) ||
+        !IsExecutable(FromAddress(kStarNextDay), 8) ||
+        !IsExecutable(FromAddress(kGenerationStart), kGenerationEnd-kGenerationStart) ||
         !IsExecutable(FromAddress(kCalcGalaxy), 8) ||
         !IsExecutable(FromAddress(kCalcPlayerStar), 8) ||
         !IsExecutable(FromAddress(kThreadExecute), 8)) {
@@ -112,6 +125,9 @@ bool PrepareImage(HMODULE module, std::wstring& error) {
     }
     g_origGalaxy = reinterpret_cast<CalcFn>(FromAddress(kCalcGalaxy));
     g_origStar = reinterpret_cast<CalcFn>(FromAddress(kCalcPlayerStar));
+    g_origNextDay = FromAddress(kStarNextDay);
+    g_generationStage = reinterpret_cast<volatile DWORD*>(FromAddress(kGenerationStage));
+    if (!g_generationStage) { error = L"generation stage address not found"; return false; }
     return true;
 }
 
@@ -144,6 +160,47 @@ bool Discover(std::wstring& error) {
     return true;
 }
 
+// Only the call from ProcessPlayerStarTurn to TStar.NextDay is changed.
+// The original function and all 300 game-day calculations still run.
+// Delphi register convention: EAX = Self, EDX = RecordFilm.
+extern "C" __declspec(naked) void __cdecl FilmSkipPlayerStarDay() {
+    __asm {
+        push ecx
+        mov ecx, g_generationStage
+        test ecx, ecx
+        jz call_original
+        cmp dword ptr [ecx], 6
+        jne call_original
+        xor edx, edx
+    call_original:
+        pop ecx
+        jmp dword ptr [g_origNextDay]
+    }
+}
+
+bool DiscoverFilmPatch(std::wstring& error) {
+    BYTE* begin = FromAddress(kProcessStarTurn);
+    BYTE* end = FromAddress(kThreadExecuteEnd);
+    unsigned matches = 0;
+    if (!begin || !end || end <= begin) { error = L"player star calc bounds missing"; return false; }
+    for (BYTE* p = begin; p + 5 <= end; ++p) {
+        if (*p != 0xE8) continue;
+        std::int32_t rel = 0;
+        std::memcpy(&rel, p+1, sizeof(rel));
+        if (p + 5 + rel != FromAddress(kStarNextDay)) continue;
+        if (++matches > 1) break;
+        g_filmPatch.instruction = p;
+        g_filmPatch.originalTarget = kStarNextDay;
+        std::memcpy(g_filmPatch.originalBytes, p, sizeof(g_filmPatch.originalBytes));
+        p += 4;
+    }
+    if (matches != 1) {
+        std::wostringstream o; o << L"expected exactly 1 film call, found " << matches;
+        error = o.str(); return false;
+    }
+    return true;
+}
+
 // Delphi TThreadCalc.Execute expects its object instance in EAX, with no stack args.
 // Calling the original method keeps the full 300-day game logic intact.
 void InvokeOriginalCalculation(DWORD job, CalcFn fallback) {
@@ -152,14 +209,40 @@ void InvokeOriginalCalculation(DWORD job, CalcFn fallback) {
     if (!context) { fallback(); return; }
     *reinterpret_cast<DWORD*>(reinterpret_cast<BYTE*>(context) + kJobOffset) = job;
     void* execute = FromAddress(kThreadExecute);
+    unsigned short previousFpuControl = 0;
+    __asm fnstcw previousFpuControl
     __asm {
         mov eax, context
         call execute
     }
+    // The original worker thread has its own x87 environment. Restore the
+    // generator thread's FPU control word before returning to its next step.
+    __asm fldcw previousFpuControl
 }
 
-extern "C" void __cdecl FastGalaxy() { InvokeOriginalCalculation(1, g_origGalaxy); }
-extern "C" void __cdecl FastPlayerStar() { InvokeOriginalCalculation(2, g_origStar); }
+void ProfileInvoke(DWORD job, CalcFn fallback) {
+    LARGE_INTEGER before = {}, after = {};
+    if (g_profile) QueryPerformanceCounter(&before);
+    InvokeOriginalCalculation(job, fallback);
+    if (!g_profile) return;
+    QueryPerformanceCounter(&after);
+    if (job == 1) {
+        ++g_galaxyCount;
+        g_galaxyTicks += static_cast<std::uint64_t>(after.QuadPart - before.QuadPart);
+    } else {
+        ++g_starCount;
+        g_starTicks += static_cast<std::uint64_t>(after.QuadPart - before.QuadPart);
+    }
+    if (g_galaxyCount && g_galaxyCount % 100 == 0 && job == 1 && g_frequency.QuadPart) {
+        std::wostringstream msg;
+        msg << L"profile turns=" << g_starCount
+            << L" galaxy_ms=" << (g_galaxyTicks * 1000 / g_frequency.QuadPart)
+            << L" player_star_ms=" << (g_starTicks * 1000 / g_frequency.QuadPart);
+        Log(msg.str());
+    }
+}
+extern "C" void __cdecl FastGalaxy() { ProfileInvoke(1, g_origGalaxy); }
+extern "C" void __cdecl FastPlayerStar() { ProfileInvoke(2, g_origStar); }
 
 bool ModifyPatch(Patch& patch, bool apply, std::wstring& error) {
     if (!patch.instruction) { error = L"empty patch"; return false; }
@@ -168,7 +251,8 @@ bool ModifyPatch(Patch& patch, bool apply, std::wstring& error) {
         desired[0] = 0xE8;
         BYTE* destination = reinterpret_cast<BYTE*>(
             patch.originalTarget == kCalcGalaxy ? reinterpret_cast<void*>(&FastGalaxy) :
-                                                   reinterpret_cast<void*>(&FastPlayerStar));
+            patch.originalTarget == kCalcPlayerStar ? reinterpret_cast<void*>(&FastPlayerStar) :
+            reinterpret_cast<void*>(&FilmSkipPlayerStarDay));
         std::intptr_t displacement = destination - (patch.instruction + 5);
         if (displacement < std::numeric_limits<std::int32_t>::min() ||
             displacement > std::numeric_limits<std::int32_t>::max()) {
@@ -215,7 +299,7 @@ extern "C" BOOL WINAPI XenoPlugin_Query(Info* info) {
     info->requiredHostApi = kHostApi;
     lstrcpynW(info->id, kId, static_cast<int>(_countof(info->id)));
     lstrcpynW(info->version, kVersion, static_cast<int>(_countof(info->version)));
-    lstrcpynW(info->description, L"Preserves all 300 original preparation turns; synchronizes 601 calculations",
+    lstrcpynW(info->description, L"300 days, direct calculations, optional pregame-only film suppression and profiling",
              static_cast<int>(_countof(info->description)));
     if (info->size >= sizeof(Info)) info->exclusiveCapabilities = 0;
     return TRUE;
@@ -230,12 +314,23 @@ extern "C" DWORD WINAPI XenoPlugin_Initialize(const Host* host) {
         Log(L"disabled by configuration");
         return 0;
     }
+    g_profile = !host->configGetBool || host->size < offsetof(Host, configGetInt) ||
+        host->configGetBool(host->configPath, L"FastNewGame", L"Profile", TRUE);
+    QueryPerformanceFrequency(&g_frequency);
     std::wstring error;
     if (!PrepareImage(host->gameModule, error) || !Discover(error) || !Install(error)) {
         Log(L"native patch was NOT installed: " + error);
         return 2;
     }
-    Log(L"installed 3 call-site hooks; all 300 original preparation days preserved");
+    Log(L"installed 3 original simulation call-site hooks; all 300 preparation days preserved");
+    const bool filmEnabled = host->configGetBool && host->size >= offsetof(Host, configGetInt) &&
+        host->configGetBool(host->configPath, L"FastNewGame", L"SkipPregameFilm", TRUE);
+    if (filmEnabled) {
+        std::wstring filmError;
+        if (DiscoverFilmPatch(filmError) && ModifyPatch(g_filmPatch, true, filmError))
+            Log(L"pregame-only film optimization installed; normal game films unchanged");
+        else Log(L"pregame film optimization not installed: " + filmError);
+    } else Log(L"pregame film optimization disabled by configuration");
     return 0;
 }
 
