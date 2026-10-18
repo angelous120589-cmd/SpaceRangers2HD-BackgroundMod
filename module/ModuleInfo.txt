@@ -1,0 +1,16 @@
+Name=FHD_FastNewGame
+Author=FHD mod project
+Section=FHD_MODS
+SectionRus=FHD_MODS
+SectionEng=FHD_MODS
+NoNormalResources=1
+Priority=5
+Languages=Rus,Eng
+SmallDescription=Ускорение создания новой игры без сокращения 300 подготовительных дней.
+FullDescription=Нативная оптимизация: сохраняет 300 подготовительных дней и заменяет повторный запуск потока на прямой последовательный расчёт в потоке генератора.
+FullDescription=<br>
+FullDescription=Нужен XenoNativeLoader. Поддерживается только проверенная версия движка SRHD 2.1.2500.
+FullDescription=<br>
+FullDescription=Экспериментальная версия: ускорение в 2 раза не подтверждено замерами.
+SmallDescriptionEng=New game creation optimization preserving all 300 presimulation days.
+FullDescriptionEng=Requires XenoNativeLoader. Hooks three validated call sites in native generator, preserving the original simulation functions and all 300 days. Experimental: 2x speedup is not verified.
