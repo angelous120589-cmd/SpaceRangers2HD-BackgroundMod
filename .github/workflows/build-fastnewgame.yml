@@ -1,7 +1,7 @@
 name: Build FHD FastNewGame Native
 on:
   push:
-    branches: [feature/fhd-fastnewgame-native-0.4]
+    branches: [feature/fhd-fastnewgame-quick-sim-0.5]
     paths-ignore: ['dist/**']
   workflow_dispatch:
 permissions:
@@ -31,8 +31,8 @@ jobs:
           $dll = [System.IO.File]::ReadAllBytes('staging/FHD_FastNewGame/Native/FHD_FastNewGame.XenoPlugin.dll')
           $pe = [BitConverter]::ToInt32($dll,0x3c)
           if ($dll[0] -ne 77 -or $dll[1] -ne 90 -or [BitConverter]::ToUInt16($dll,$pe+4) -ne 0x14c) { throw 'DLL is not PE32 x86' }
-          Compress-Archive -Path staging/FHD_FastNewGame -DestinationPath dist/FHD_FastNewGame_Native_v0.4.zip -Force
-          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path dist/FHD_FastNewGame_Native_v0.4.zip).Path)
+          Compress-Archive -Path staging/FHD_FastNewGame -DestinationPath dist/FHD_FastNewGame_Native_v0.5.zip -Force
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path dist/FHD_FastNewGame_Native_v0.5.zip).Path)
           try {
             $names = @($archive.Entries | ForEach-Object { $_.FullName })
             foreach ($expected in @('FHD_FastNewGame/ModuleInfo.txt','FHD_FastNewGame/Native/FHD_FastNewGame.XenoPlugin.dll','FHD_FastNewGame/Native/FHD_FastNewGame.XenoPlugin.ini')) {
@@ -40,20 +40,20 @@ jobs:
             }
             if (@($names | Where-Object { $_.EndsWith('.lib') -or $_.EndsWith('.exp') -or $_.EndsWith('.obj') }).Count -ne 0) { throw 'Build-only files leaked into ZIP' }
           } finally { $archive.Dispose() }
-          Get-FileHash dist/FHD_FastNewGame_Native_v0.4.zip -Algorithm SHA256 | Format-List
+          Get-FileHash dist/FHD_FastNewGame_Native_v0.5.zip -Algorithm SHA256 | Format-List
       - name: Upload installable mod
         uses: actions/upload-artifact@v4
         with:
-          name: FHD_FastNewGame_Native_v0.4
-          path: dist/FHD_FastNewGame_Native_v0.4.zip
+          name: FHD_FastNewGame_Native_v0.5
+          path: dist/FHD_FastNewGame_Native_v0.5.zip
           if-no-files-found: error
       - name: Publish the installable ZIP
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f dist/FHD_FastNewGame_Native_v0.4.zip
-          git commit -m "Package FHD FastNewGame native v0.4 [skip ci]"
+          git add -f dist/FHD_FastNewGame_Native_v0.5.zip
+          git commit -m "Package FHD FastNewGame native v0.5 [skip ci]"
           if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
           git push
           if ($LASTEXITCODE -ne 0) { throw 'Push failed' }
