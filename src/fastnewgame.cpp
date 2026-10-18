@@ -21,13 +21,18 @@ constexpr DWORD kProcessStarTurn = 0x0072F6C8;
 constexpr DWORD kThreadExecuteEnd = 0x0072F91C;
 constexpr DWORD kStarNextDay    = 0x00863998;
 constexpr DWORD kGenerationStage= 0x0081B7E8;
+constexpr DWORD kRefreshStepParameters = 0x00860A74;
+constexpr DWORD kStarStepCountOffset = 0x104;
+constexpr DWORD kStarStepScaleOffset = 0x108;
+constexpr DWORD kPointDefensePassCount = 0x0081BB30;
 constexpr DWORD kJobOffset      = 0x2C;
 constexpr wchar_t kId[] = L"FHD_FastNewGame";
-constexpr wchar_t kVersion[] = L"0.4.0";
+constexpr wchar_t kVersion[] = L"0.5.0";
 constexpr std::uint32_t kHostApi = 1;
 
 using LogFn = void (WINAPI*)(const wchar_t*, const wchar_t*);
 using ConfigBoolFn = BOOL (WINAPI*)(const wchar_t*, const wchar_t*, const wchar_t*, BOOL);
+using ConfigIntFn = int (WINAPI*)(const wchar_t*, const wchar_t*, const wchar_t*, int, int, int);
 struct Host {
     std::uint32_t size;
     std::uint32_t apiVersion;
@@ -38,7 +43,7 @@ struct Host {
     const wchar_t* configPath;
     LogFn log;
     ConfigBoolFn configGetBool;
-    void* configGetInt;
+    ConfigIntFn configGetInt;
     void* configGetString;
 };
 struct Info {
@@ -60,6 +65,11 @@ struct Patch {
 };
 std::array<Patch, 3> g_patches;
 Patch g_filmPatch;
+Patch g_quickStepPatch;
+void* g_origRefresh = nullptr;
+int g_quickStepCount = 0;
+double g_quickStepScale = 0.0;
+bool g_quickSimEnabled = false;
 void* g_origNextDay = nullptr;
 volatile DWORD* g_generationStage = nullptr;
 bool g_profile = true;
@@ -115,7 +125,8 @@ bool PrepareImage(HMODULE module, std::wstring& error) {
     if (g_imageSize < kThreadPointer - kImageBase + sizeof(void*)) {
         error = L"image too small for 2.1.2500 offsets"; return false;
     }
-    if (!IsExecutable(FromAddress(kProcessStarTurn), kThreadExecuteEnd-kProcessStarTurn) ||
+    if (!IsExecutable(FromAddress(kRefreshStepParameters), 8) ||
+        !IsExecutable(FromAddress(kProcessStarTurn), kThreadExecuteEnd-kProcessStarTurn) ||
         !IsExecutable(FromAddress(kStarNextDay), 8) ||
         !IsExecutable(FromAddress(kGenerationStart), kGenerationEnd-kGenerationStart) ||
         !IsExecutable(FromAddress(kCalcGalaxy), 8) ||
@@ -126,6 +137,7 @@ bool PrepareImage(HMODULE module, std::wstring& error) {
     g_origGalaxy = reinterpret_cast<CalcFn>(FromAddress(kCalcGalaxy));
     g_origStar = reinterpret_cast<CalcFn>(FromAddress(kCalcPlayerStar));
     g_origNextDay = FromAddress(kStarNextDay);
+    g_origRefresh = FromAddress(kRefreshStepParameters);
     g_generationStage = reinterpret_cast<volatile DWORD*>(FromAddress(kGenerationStage));
     if (!g_generationStage) { error = L"generation stage address not found"; return false; }
     return true;
@@ -201,6 +213,70 @@ bool DiscoverFilmPatch(std::wstring& error) {
     return true;
 }
 
+// TStar.NextDay always invokes TStar.RefreshMovementStepParameters before its
+// per-step simulation loops. During new-game generation only, we keep ALL daily
+// logic, but use a smaller granularity for travel, collisions and combat.
+// This approximates outcomes and intentionally does NOT promise vanilla-equivalent
+// battles. The minimum 12 subdivisions avoids divide-by-zero in native phase
+// counters (11 phases, 9 phases, 5 phases, and point-defence passes).
+extern "C" __declspec(naked) void __cdecl QuickSimRefreshStepParameters() {
+    __asm {
+        push ebx
+        mov ebx, eax
+        push edx
+        push ecx
+        call dword ptr [g_origRefresh]
+        pop ecx
+        pop edx
+        mov eax, ebx
+        push ecx
+        mov ecx, g_generationStage
+        test ecx, ecx
+        jz quick_done
+        cmp dword ptr [ecx], 6
+        jne quick_done
+        cmp dword ptr [g_quickStepCount], 12
+        jl quick_done
+        mov ecx, dword ptr [g_quickStepCount]
+        mov dword ptr [ebx + kStarStepCountOffset], ecx
+        fld qword ptr [g_quickStepScale]
+        fstp tbyte ptr [ebx + kStarStepScaleOffset]
+    quick_done:
+        pop ecx
+        mov eax, ebx
+        pop ebx
+        ret
+    }
+}
+
+bool DiscoverStepPatch(std::wstring& error) {
+    BYTE* begin = FromAddress(kStarNextDay);
+    BYTE* end = begin ? begin + 0x500 : nullptr;
+    if (!begin || !end || !IsExecutable(begin, 0x500)) {
+        error = L"star daily simulation prolog unavailable";
+        return false;
+    }
+    unsigned hits = 0;
+    for (BYTE* p = begin; p + 5 <= end; ++p) {
+        if (*p != 0xE8) continue;
+        std::int32_t offset = 0;
+        std::memcpy(&offset, p + 1, sizeof(offset));
+        if (p + 5 + offset != FromAddress(kRefreshStepParameters)) continue;
+        if (++hits > 1) break;
+        g_quickStepPatch.instruction = p;
+        g_quickStepPatch.originalTarget = kRefreshStepParameters;
+        std::memcpy(g_quickStepPatch.originalBytes, p, sizeof(g_quickStepPatch.originalBytes));
+        p += 4;
+    }
+    if (hits != 1) {
+        std::wostringstream o;
+        o << L"expected one refresh call inside daily star step, found " << hits;
+        error = o.str();
+        return false;
+    }
+    return true;
+}
+
 // Delphi TThreadCalc.Execute expects its object instance in EAX, with no stack args.
 // Calling the original method keeps the full 300-day game logic intact.
 void InvokeOriginalCalculation(DWORD job, CalcFn fallback) {
@@ -252,7 +328,8 @@ bool ModifyPatch(Patch& patch, bool apply, std::wstring& error) {
         BYTE* destination = reinterpret_cast<BYTE*>(
             patch.originalTarget == kCalcGalaxy ? reinterpret_cast<void*>(&FastGalaxy) :
             patch.originalTarget == kCalcPlayerStar ? reinterpret_cast<void*>(&FastPlayerStar) :
-            reinterpret_cast<void*>(&FilmSkipPlayerStarDay));
+            patch.originalTarget == kStarNextDay ? reinterpret_cast<void*>(&FilmSkipPlayerStarDay) :
+            reinterpret_cast<void*>(&QuickSimRefreshStepParameters));
         std::intptr_t displacement = destination - (patch.instruction + 5);
         if (displacement < std::numeric_limits<std::int32_t>::min() ||
             displacement > std::numeric_limits<std::int32_t>::max()) {
@@ -299,7 +376,7 @@ extern "C" BOOL WINAPI XenoPlugin_Query(Info* info) {
     info->requiredHostApi = kHostApi;
     lstrcpynW(info->id, kId, static_cast<int>(_countof(info->id)));
     lstrcpynW(info->version, kVersion, static_cast<int>(_countof(info->version)));
-    lstrcpynW(info->description, L"300 days, direct calculations, optional pregame-only film suppression and profiling",
+    lstrcpynW(info->description, L"300 days; experimental compressed travel and battle substeps; no vanilla outcome guarantee",
              static_cast<int>(_countof(info->description)));
     if (info->size >= sizeof(Info)) info->exclusiveCapabilities = 0;
     return TRUE;
@@ -323,6 +400,32 @@ extern "C" DWORD WINAPI XenoPlugin_Initialize(const Host* host) {
         return 2;
     }
     Log(L"installed 3 original simulation call-site hooks; all 300 preparation days preserved");
+    if (host->size >= offsetof(Host, configGetString) && host->configGetBool &&
+        host->configGetBool(host->configPath, L"FastNewGame", L"QuickSimulation", TRUE)) {
+        const int configured = host->configGetInt ?
+            host->configGetInt(host->configPath, L"FastNewGame", L"SimulationSubsteps", 12, 12, 50) : 12;
+        // Phase divisors inside TStar.NextDay must never be zero. The original
+        // game permits PointDefensePassCount to be adjusted by another mod.
+        const int defence = *reinterpret_cast<volatile int*>(FromAddress(kPointDefensePassCount));
+        g_quickStepCount = configured;
+        if (defence > 0 && defence < 50 && defence + 3 > g_quickStepCount)
+            g_quickStepCount = defence + 3;
+        if (g_quickStepCount > 50) g_quickStepCount = 50;
+        g_quickStepScale = 1.0 / static_cast<double>(g_quickStepCount);
+        std::wstring stepError;
+        if (DiscoverStepPatch(stepError) && ModifyPatch(g_quickStepPatch, true, stepError)) {
+            g_quickSimEnabled = true;
+            std::wostringstream status;
+            status << L"QuickSimulation=installed: " << g_quickStepCount
+                   << L" movement/combat substeps per day instead of 50/200"
+                   << L"; 300 days unchanged; approximate outcomes";
+            Log(status.str());
+        } else {
+            Log(L"QuickSimulation=not installed: " + stepError);
+        }
+    } else {
+        Log(L"QuickSimulation=disabled by config; original battle and travel substeps");
+    }
     const bool filmEnabled = host->configGetBool && host->size >= offsetof(Host, configGetInt) &&
         host->configGetBool(host->configPath, L"FastNewGame", L"SkipPregameFilm", TRUE);
     if (filmEnabled) {
