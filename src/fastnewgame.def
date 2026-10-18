@@ -1,0 +1,4 @@
+LIBRARY "FHD_FastNewGame.XenoPlugin.dll"
+EXPORTS
+    XenoPlugin_Query
+    XenoPlugin_Initialize
