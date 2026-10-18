@@ -23,9 +23,10 @@ jobs:
           if (-not $vs) { throw 'MSVC installation not found' }
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars32.bat'
           New-Item -ItemType Directory -Force build, staging/FHD_FastNewGame/Native | Out-Null
-          $command = 'call "' + $vcvars + '" && cl /nologo /LD /EHsc /O2 /W4 /DUNICODE /D_UNICODE /Fe:staging\FHD_FastNewGame\Native\FHD_FastNewGame.XenoPlugin.dll src\fastnewgame.cpp src\fastnewgame.def /link /MACHINE:X86'
+          $command = 'call "' + $vcvars + '" && cl /nologo /LD /EHsc /O2 /W4 /DUNICODE /D_UNICODE /Fe:build\FHD_FastNewGame.XenoPlugin.dll src\fastnewgame.cpp src\fastnewgame.def /link /MACHINE:X86'
           cmd /c $command
           if ($LASTEXITCODE -ne 0) { throw "compiler exit code $LASTEXITCODE" }
+          Copy-Item build/FHD_FastNewGame.XenoPlugin.dll staging/FHD_FastNewGame/Native/
           Copy-Item module/ModuleInfo.txt staging/FHD_FastNewGame/
           Copy-Item module/FHD_FastNewGame.XenoPlugin.ini staging/FHD_FastNewGame/Native/
           Copy-Item module/README_RU.txt staging/FHD_FastNewGame/
@@ -36,6 +37,31 @@ jobs:
           if ([BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x14c) { throw 'DLL is not 32-bit x86' }
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path staging/FHD_FastNewGame -DestinationPath dist/FHD_FastNewGame_Native_v0.3.zip -Force
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path dist/FHD_FastNewGame_Native_v0.3.zip).Path)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName })
+            foreach ($expected in @('FHD_FastNewGame/ModuleInfo.txt','FHD_FastNewGame/Native/FHD_FastNewGame.XenoPlugin.dll','FHD_FastNewGame/Native/FHD_FastNewGame.XenoPlugin.ini')) {
+              if ($names -notcontains $expected) { throw "Missing file in ZIP: $expected" }
+            }
+            if ($names | Where-Object { $_ -match '\.(lib|exp|obj)
+      - name: Upload installable mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: FHD_FastNewGame_Native_v0.3
+          path: dist/FHD_FastNewGame_Native_v0.3.zip
+          if-no-files-found: error
+      - name: Publish ZIP to isolated branch
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f dist/FHD_FastNewGame_Native_v0.3.zip
+          git commit -m "Build FHD FastNewGame native v0.3 [skip ci]"
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
+          git push
+          if ($LASTEXITCODE -ne 0) { throw 'Push failed' }
+ }) { throw 'Build-only files leaked into ZIP' }
+          } finally { $archive.Dispose() }
           Get-FileHash dist/FHD_FastNewGame_Native_v0.3.zip -Algorithm SHA256 | Format-List
       - name: Upload installable mod
         uses: actions/upload-artifact@v4
